@@ -23,8 +23,11 @@ files/
   lib/
     signage-fetch.py
   sbin/
+    signage-admin-mode
+    signage-kiosk-mode
     signage-sync
   systemd/
+    signage.service
     signage-sync.service
     signage-sync.timer
   wayland-sessions/
@@ -47,13 +50,37 @@ SLIDES_URL="https://server.company.com/signage/show1"
 
 The URL must expose a plain Apache/Nginx-style directory listing with direct links to image files. The installer fails if the URL is unreachable or if no `feh`-readable image files are found.
 
+## Controlling signage mode
+
+The installer adds a `signage.service` kiosk-mode controller. It does not run `feh` directly; it toggles LightDM between the signage autologin session and the normal graphical login screen.
+
+Stop the slideshow and return to the graphical login screen:
+
+```bash
+sudo systemctl stop signage
+```
+
+Start the slideshow again:
+
+```bash
+sudo systemctl start signage
+```
+
+Restart kiosk mode:
+
+```bash
+sudo systemctl restart signage
+```
+
+The service is enabled at install time, so a reboot returns the Pi to signage mode even if `sudo systemctl stop signage` was used for local administration.
+
 ## Uninstall
 
 ```bash
 sudo ./uninstall-signage.sh
 ```
 
-The uninstaller is intended for development iteration. It removes the signage files, disables the sync timer, removes `signage-user`, removes the LightDM autologin drop-in, and purges `feh`. It also removes any other required package that the installer recorded as absent before installation.
+The uninstaller is intended for development iteration. It removes the signage files, disables the sync timer and signage controller, removes `signage-user`, removes the LightDM autologin drop-in, restores the backed-up LightDM config, and purges `feh`. It also removes any other required package that the installer recorded as absent before installation.
 
 ## Runtime behavior
 
@@ -73,11 +100,14 @@ The uninstaller is intended for development iteration. It removes the signage fi
 ```text
 /etc/signage/signage.conf
 /etc/lightdm/lightdm.conf
+/etc/systemd/system/signage.service
 /etc/systemd/system/signage-sync.service
 /etc/systemd/system/signage-sync.timer
 /usr/share/wayland-sessions/signage-session.desktop
 /usr/local/bin/signage-session
 /usr/local/bin/start-signage
+/usr/local/sbin/signage-admin-mode
+/usr/local/sbin/signage-kiosk-mode
 /usr/local/sbin/signage-sync
 /usr/local/lib/signage/signage-fetch.py
 /var/lib/signage/
@@ -87,7 +117,7 @@ The uninstaller is intended for development iteration. It removes the signage fi
 
 ## Notes
 
-The installer does not restart LightDM by default. Reboot the Pi, or set this in `signage.conf` before installing if you want the installer to restart LightDM immediately:
+The installer enables `signage.service` but does not start it or restart LightDM by default. Reboot the Pi, run `sudo systemctl start signage`, or set this in `signage.conf` before installing if you want the installer to start signage mode immediately:
 
 ```bash
 RESTART_LIGHTDM_AFTER_INSTALL="1"

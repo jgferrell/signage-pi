@@ -39,6 +39,8 @@ stop_services_and_sessions() {
   log "Stopping signage services and user session"
   systemctl disable --now signage-sync.timer >/dev/null 2>&1 || true
   systemctl stop signage-sync.service >/dev/null 2>&1 || true
+  systemctl disable signage.service >/dev/null 2>&1 || true
+  systemctl stop signage.service >/dev/null 2>&1 || true
 
   if id -u "${SIGNAGE_USER}" >/dev/null 2>&1; then
     loginctl terminate-user "${SIGNAGE_USER}" >/dev/null 2>&1 || true
@@ -66,6 +68,7 @@ restore_lightdm_config() {
 
 remove_files() {
   log "Removing signage files"
+  rm -f /etc/systemd/system/signage.service
   rm -f /etc/systemd/system/signage-sync.service
   rm -f /etc/systemd/system/signage-sync.timer
   rm -f /etc/lightdm/lightdm.conf.d/50-signage-autologin.conf
@@ -73,6 +76,8 @@ remove_files() {
   rm -f /usr/local/lib/signage/signage-fetch.py
   rmdir /usr/local/lib/signage >/dev/null 2>&1 || true
   rm -f /usr/local/sbin/signage-sync
+  rm -f /usr/local/sbin/signage-kiosk-mode
+  rm -f /usr/local/sbin/signage-admin-mode
   rm -f /usr/local/bin/start-signage
   rm -f /usr/local/bin/signage-session
   rm -rf /etc/signage
