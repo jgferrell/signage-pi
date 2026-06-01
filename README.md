@@ -8,7 +8,7 @@ Target baseline:
 - LightDM active
 - Read-only HTTP/HTTPS directory listing for slide files
 
-This installer creates a dedicated `signage-user`, configures a custom LightDM Wayland session named `signage-session`, downloads slides from a web directory into a local cache, and enables a 5-minute sync timer.
+This installer creates a dedicated `signage-user`, configures a custom LightDM Wayland session named `signage-session`, downloads slides from a web directory into a local cache, enables a 5-minute sync timer, and ensures OpenSSH Server is installed/running for future maintenance.
 
 ## Layout
 
@@ -40,6 +40,12 @@ files/
 cp signage.conf.example signage.conf
 nano signage.conf
 sudo ./install-signage.sh
+```
+
+The installer refuses to run if signage already appears to be installed or partially installed. Use repair mode to carefully reinstall program files and service configuration over an existing or damaged install:
+
+```bash
+sudo ./install-signage.sh --repair
 ```
 
 At minimum, set:
@@ -82,7 +88,23 @@ The service is enabled at install time, so a reboot returns the Pi to signage mo
 sudo ./uninstall-signage.sh
 ```
 
-The uninstaller is intended for development iteration. It removes the signage files, disables the sync timer and signage controller, removes `signage-user`, removes the LightDM autologin drop-in, restores the backed-up LightDM config, and purges `feh`. It also removes any other required package that the installer recorded as absent before installation.
+The uninstaller is intended for development iteration. It removes signage program files, disables the sync timer and signage controller, removes `signage-user` if installer state says the user was created by signage, removes the signage SSH drop-in, restores the backed-up LightDM config, and purges `feh`. It also removes other non-SSH packages that the installer recorded as absent before installation.
+
+Normal uninstall preserves local configuration and slideshow cache where practical. To remove all signage-owned config, cache, state, and logs, use purge mode:
+
+```bash
+sudo ./uninstall-signage.sh --purge
+```
+
+If the installer state file is missing, uninstall switches to cautious manual mode. Each cleanup step is briefly described and requires `y`, `n`, or `a`:
+
+```text
+y = run the described step
+n = skip the described step
+a = abort uninstall immediately
+```
+
+The uninstaller does not automatically remove `openssh-server`, even if signage installed it, because SSH may be the active maintenance path. It does remove signage's SSH password-authentication drop-in.
 
 ## Runtime behavior
 
@@ -101,6 +123,7 @@ The uninstaller is intended for development iteration. It removes the signage fi
 
 ```text
 /etc/signage/signage.conf
+/etc/ssh/sshd_config.d/99-signage-password-auth.conf
 /etc/lightdm/lightdm.conf
 /etc/systemd/system/signage.service
 /etc/systemd/system/signage-sync.service
@@ -113,6 +136,8 @@ The uninstaller is intended for development iteration. It removes the signage fi
 /usr/local/sbin/signage-sync
 /usr/local/lib/signage/signage-fetch.py
 /var/lib/signage/
+/var/log/signage/
+/var/lib/signage/state/install.state
 /var/lib/signage/state/lightdm.conf.pre-signage
 /home/signage-user/
 ```
@@ -131,6 +156,22 @@ For development cleanup, you may also set:
 RESTART_LIGHTDM_AFTER_UNINSTALL="1"
 ```
 
+
+## SSH readiness
+
+Install ensures OpenSSH Server is installed, enabled, and running:
+
+```bash
+systemctl status ssh
+```
+
+It also writes this installer-owned drop-in so password authentication is permitted for future remote maintenance:
+
+```text
+/etc/ssh/sshd_config.d/99-signage-password-auth.conf
+```
+
+Uninstall removes that drop-in and reloads SSH. It leaves `openssh-server` installed by default so uninstall does not accidentally remove the operator's remote access path.
 
 ## LightDM autologin behavior
 
