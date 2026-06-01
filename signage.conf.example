@@ -1,0 +1,28 @@
+# Copy this file to ./signage.conf before running install-signage.sh.
+# The installer copies ./signage.conf to /etc/signage/signage.conf.
+
+# Required: URL of a plain Apache/Nginx-style directory listing containing slides.
+# Read-only access must not require authentication.
+SLIDES_URL="https://server.company.com/signage/show1"
+
+# Fixed defaults for this project. The installer currently expects these names.
+SIGNAGE_USER="signage-user"
+SIGNAGE_SESSION="signage-session"
+
+# Playback behavior.
+SLIDESHOW_DELAY_SECONDS="8"
+
+# Sync/reload behavior.
+# signage-sync.timer runs every 5 minutes by default.
+RESTART_THROTTLE_SECONDS="900"    # 15 minutes
+HTTP_TIMEOUT_SECONDS="30"
+KEEP_RELEASES="5"
+
+# Candidate filename extensions to download from the directory listing.
+# Files are then validated with feh before promotion.
+IMAGE_EXTENSIONS="png jpg jpeg gif bmp webp tif tiff xpm pnm pbm pgm ppm"
+
+# Safety default: do not restart LightDM during install/uninstall.
+# Set to 1 during development if you want the graphical login manager restarted automatically.
+RESTART_LIGHTDM_AFTER_INSTALL="0"
+RESTART_LIGHTDM_AFTER_UNINSTALL="0"

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -u
+
+CONFIG_FILE="/etc/signage/signage.conf"
+CURRENT_DIR="/var/lib/signage/current"
+SLIDESHOW_DELAY_SECONDS="8"
+
+if [[ -f "${CONFIG_FILE}" ]]; then
+  # shellcheck source=/dev/null
+  source "${CONFIG_FILE}"
+  SLIDESHOW_DELAY_SECONDS="${SLIDESHOW_DELAY_SECONDS:-8}"
+fi
+
+while true; do
+  xset -dpms >/dev/null 2>&1 || true
+  xset s off >/dev/null 2>&1 || true
+  xset s noblank >/dev/null 2>&1 || true
+
+  if [[ -s "${CURRENT_DIR}/.playlist.txt" ]]; then
+    feh --fullscreen --hide-pointer --slideshow-delay "${SLIDESHOW_DELAY_SECONDS}" --filelist "${CURRENT_DIR}/.playlist.txt"
+  elif [[ -d "${CURRENT_DIR}" ]]; then
+    feh --fullscreen --hide-pointer --slideshow-delay "${SLIDESHOW_DELAY_SECONDS}" --sort name "${CURRENT_DIR}"
+  else
+    sleep 10
+  fi
+
+  # If feh exits or is killed by signage-sync to reload content, restart it.
+  sleep 3
+done

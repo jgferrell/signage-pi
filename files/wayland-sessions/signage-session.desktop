@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=signage-session
+Comment=Digital signage Wayland session
+Exec=/usr/local/bin/signage-session
+Type=Application
+DesktopNames=signage-session

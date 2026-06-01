@@ -1,0 +1,13 @@
+[Unit]
+Description=Run Digital Signage content sync every 5 minutes
+Documentation=man:systemd.timer(5)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+AccuracySec=30s
+Persistent=true
+Unit=signage-sync.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+START_SIGNAGE="/usr/local/bin/start-signage"
+
+if command -v labwc-pi >/dev/null 2>&1; then
+  exec labwc-pi -S "${START_SIGNAGE}"
+elif command -v labwc >/dev/null 2>&1; then
+  exec labwc -S "${START_SIGNAGE}"
+else
+  echo "signage-session: neither labwc-pi nor labwc was found" >&2
+  exit 1
+fi

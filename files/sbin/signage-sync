@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CONFIG_FILE="/etc/signage/signage.conf"
+BASE_DIR="/var/lib/signage"
+RELEASES_DIR="${BASE_DIR}/releases"
+STAGING_DIR="${BASE_DIR}/staging"
+STATE_DIR="${BASE_DIR}/state"
+CURRENT_LINK="${BASE_DIR}/current"
+LOCK_FILE="${STATE_DIR}/sync.lock"
+CURRENT_MANIFEST="${STATE_DIR}/current.manifest"
+LAST_RESTART_FILE="${STATE_DIR}/last-restart"
+PENDING_RESTART_FILE="${STATE_DIR}/restart-pending"
+FETCHER="/usr/local/lib/signage/signage-fetch.py"
+
+INITIAL=0
+NO_RESTART=0
+
+log() { printf '[signage-sync] %s\n' "$*"; }
+die() { printf '[signage-sync] ERROR: %s\n' "$*" >&2; exit 1; }
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --initial) INITIAL=1 ;;
+    --no-restart) NO_RESTART=1 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+  shift
+done
+
+[[ -f "${CONFIG_FILE}" ]] || die "Missing ${CONFIG_FILE}"
+# shellcheck source=/dev/null
+source "${CONFIG_FILE}"
+
+: "${SLIDES_URL:?SLIDES_URL must be set in ${CONFIG_FILE}}"
+SIGNAGE_USER="${SIGNAGE_USER:-signage-user}"
+SLIDESHOW_DELAY_SECONDS="${SLIDESHOW_DELAY_SECONDS:-8}"
+RESTART_THROTTLE_SECONDS="${RESTART_THROTTLE_SECONDS:-900}"
+HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-30}"
+KEEP_RELEASES="${KEEP_RELEASES:-5}"
+IMAGE_EXTENSIONS="${IMAGE_EXTENSIONS:-png jpg jpeg gif bmp webp tif tiff xpm pnm pbm pgm ppm}"
+
+mkdir -p "${RELEASES_DIR}" "${STAGING_DIR}" "${STATE_DIR}"
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+  log "Another sync is already running; exiting."
+  exit 0
+fi
+
+stage=""
+cleanup() {
+  if [[ -n "${stage}" && -d "${stage}" ]]; then
+    rm -rf "${stage}"
+  fi
+}
+trap cleanup EXIT
+
+validate_with_feh() {
+  local dir="$1"
+  local file
+  local valid_count=0
+
+  while IFS= read -r -d '' file; do
+    if feh --list "${file}" >/dev/null 2>&1; then
+      valid_count=$((valid_count + 1))
+    else
+      log "Ignoring file that feh cannot read: $(basename "${file}")"
+      rm -f -- "${file}"
+    fi
+  done < <(find "${dir}" -maxdepth 1 -type f ! -name '.fetch-manifest.txt' -print0)
+
+  if [[ "${valid_count}" -lt 1 ]]; then
+    return 1
+  fi
+}
+
+generate_manifest() {
+  local dir="$1"
+  (
+    cd "${dir}"
+    while IFS= read -r -d '' file; do
+      sha256sum "${file#./}"
+    done < <(find . -maxdepth 1 -type f ! -name '.fetch-manifest.txt' ! -name '.playlist.txt' ! -name '.manifest.sha256' -print0 | sort -z -f)
+  )
+}
+
+generate_playlist() {
+  local dir="$1"
+  (
+    cd "${dir}"
+    while IFS= read -r filename; do
+      printf '%s/%s\n' "${dir}" "${filename}"
+    done < <(find . -maxdepth 1 -type f ! -name '.fetch-manifest.txt' ! -name '.playlist.txt' ! -name '.manifest.sha256' -printf '%f\n' | sort -f)
+  ) > "${dir}/.playlist.txt"
+}
+
+maybe_restart_feh() {
+  if [[ "${NO_RESTART}" == "1" ]]; then
+    log "Restart suppressed by --no-restart."
+    rm -f "${PENDING_RESTART_FILE}"
+    return 0
+  fi
+
+  local now last elapsed
+  now="$(date +%s)"
+  last="0"
+  if [[ -s "${LAST_RESTART_FILE}" ]]; then
+    read -r last < "${LAST_RESTART_FILE}" || last="0"
+  fi
+  if ! [[ "${last}" =~ ^[0-9]+$ ]]; then
+    last="0"
+  fi
+
+  elapsed=$((now - last))
+  if [[ "${elapsed}" -ge "${RESTART_THROTTLE_SECONDS}" ]]; then
+    if id -u "${SIGNAGE_USER}" >/dev/null 2>&1; then
+      pkill -u "${SIGNAGE_USER}" -x feh >/dev/null 2>&1 || true
+    fi
+    printf '%s\n' "${now}" > "${LAST_RESTART_FILE}"
+    rm -f "${PENDING_RESTART_FILE}"
+    log "Slideshow restart requested."
+  else
+    printf '%s\n' "${now}" > "${PENDING_RESTART_FILE}"
+    log "Restart deferred; throttle window has $((RESTART_THROTTLE_SECONDS - elapsed)) second(s) remaining."
+  fi
+}
+
+maybe_apply_pending_restart() {
+  if [[ -f "${PENDING_RESTART_FILE}" ]]; then
+    log "Pending restart exists; checking throttle."
+    maybe_restart_feh
+  fi
+}
+
+prune_old_releases() {
+  local keep="${KEEP_RELEASES}"
+  if ! [[ "${keep}" =~ ^[0-9]+$ ]] || [[ "${keep}" -lt 1 ]]; then
+    keep=5
+  fi
+
+  mapfile -t releases < <(find "${RELEASES_DIR}" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' | sort -nr | awk '{print $2}')
+  local idx
+  for idx in "${!releases[@]}"; do
+    if [[ "${idx}" -ge "${keep}" ]]; then
+      rm -rf -- "${releases[$idx]}"
+    fi
+  done
+}
+
+main() {
+  stage="$(mktemp -d "${STAGING_DIR}/sync.XXXXXXXX")"
+  local files_dir="${stage}/files"
+  mkdir -p "${files_dir}"
+
+  log "Fetching slides from ${SLIDES_URL}"
+  "${FETCHER}" \
+    --url "${SLIDES_URL}" \
+    --dest "${files_dir}" \
+    --extensions "${IMAGE_EXTENSIONS}" \
+    --timeout "${HTTP_TIMEOUT_SECONDS}"
+
+  if ! validate_with_feh "${files_dir}"; then
+    die "No feh-readable images found after download."
+  fi
+
+  local new_manifest="${stage}/new.manifest"
+  generate_manifest "${files_dir}" > "${new_manifest}"
+
+  if [[ -f "${CURRENT_MANIFEST}" ]] && cmp -s "${new_manifest}" "${CURRENT_MANIFEST}"; then
+    log "No slideshow content changes detected."
+    maybe_apply_pending_restart
+    exit 0
+  fi
+
+  local release_name release_path
+  release_name="$(date +%Y%m%d-%H%M%S)"
+  release_path="${RELEASES_DIR}/${release_name}"
+  if [[ -e "${release_path}" ]]; then
+    release_path="${release_path}.$$"
+  fi
+
+  mv "${files_dir}" "${release_path}"
+  generate_playlist "${release_path}"
+  cp "${new_manifest}" "${release_path}/.manifest.sha256"
+  cp "${new_manifest}" "${CURRENT_MANIFEST}"
+
+  ln -sfn "${release_path}" "${CURRENT_LINK}.tmp"
+  mv -Tf "${CURRENT_LINK}.tmp" "${CURRENT_LINK}"
+
+  chmod -R a+rX "${release_path}"
+  prune_old_releases
+
+  log "Promoted new slideshow release: ${release_path}"
+  maybe_restart_feh
+}
+
+main "$@"
