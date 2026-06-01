@@ -117,8 +117,11 @@ install_files() {
   install -m 0644 "${CONF_SRC}" /etc/signage/signage.conf
   install -m 0755 "${PROJECT_DIR}/files/lib/signage-fetch.py" /usr/local/lib/signage/signage-fetch.py
   install -m 0755 "${PROJECT_DIR}/files/sbin/signage-sync" /usr/local/sbin/signage-sync
+  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-kiosk-mode" /usr/local/sbin/signage-kiosk-mode
+  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-admin-mode" /usr/local/sbin/signage-admin-mode
   install -m 0755 "${PROJECT_DIR}/files/bin/start-signage" /usr/local/bin/start-signage
   install -m 0755 "${PROJECT_DIR}/files/bin/signage-session" /usr/local/bin/signage-session
+  install -m 0644 "${PROJECT_DIR}/files/systemd/signage.service" /etc/systemd/system/signage.service
   install -m 0644 "${PROJECT_DIR}/files/systemd/signage-sync.service" /etc/systemd/system/signage-sync.service
   install -m 0644 "${PROJECT_DIR}/files/systemd/signage-sync.timer" /etc/systemd/system/signage-sync.timer
   install -m 0644 "${PROJECT_DIR}/files/wayland-sessions/signage-session.desktop" /usr/share/wayland-sessions/signage-session.desktop
@@ -145,66 +148,7 @@ configure_lightdm() {
     fi
   fi
 
-  python3 - <<'PY'
-from pathlib import Path
-
-path = Path('/etc/lightdm/lightdm.conf')
-text = path.read_text() if path.exists() else ''
-settings = {
-    'autologin-user': 'signage-user',
-    'autologin-user-timeout': '0',
-    'user-session': 'signage-session',
-    'autologin-session': 'signage-session',
-}
-
-lines = text.splitlines()
-out = []
-in_seat = False
-seen_seat = False
-written = set()
-
-for line in lines:
-    stripped = line.strip()
-
-    if stripped == '[Seat:*]':
-        in_seat = True
-        seen_seat = True
-        out.append(line)
-        continue
-
-    if in_seat and stripped.startswith('[') and stripped.endswith(']'):
-        for key, value in settings.items():
-            if key not in written:
-                out.append(f'{key}={value}')
-                written.add(key)
-        in_seat = False
-
-    if in_seat and '=' in stripped:
-        key = stripped.split('=', 1)[0].strip()
-        if key in settings:
-            out.append(f'{key}={settings[key]}')
-            written.add(key)
-            continue
-
-    out.append(line)
-
-if seen_seat:
-    if in_seat:
-        for key, value in settings.items():
-            if key not in written:
-                out.append(f'{key}={value}')
-                written.add(key)
-else:
-    if out and out[-1].strip():
-        out.append('')
-    out.append('[Seat:*]')
-    for key, value in settings.items():
-        out.append(f'{key}={value}')
-
-path.write_text('\n'.join(out) + '\n')
-PY
-
-  chmod 0644 "${lightdm_conf}"
+  /usr/local/sbin/signage-kiosk-mode --no-restart
 
   # Remove stale copies from earlier development iterations. The canonical
   # installer-owned LightDM change is now the backed-up edit to lightdm.conf.
@@ -219,15 +163,16 @@ run_initial_sync() {
 }
 
 enable_services() {
-  log "Enabling signage sync timer"
+  log "Enabling signage services"
   systemctl daemon-reload
+  systemctl enable signage.service
   systemctl enable --now signage-sync.timer
 
   if [[ "${RESTART_LIGHTDM_AFTER_INSTALL}" == "1" ]]; then
-    log "Restarting LightDM because RESTART_LIGHTDM_AFTER_INSTALL=1"
-    systemctl restart lightdm
+    log "Starting signage.service because RESTART_LIGHTDM_AFTER_INSTALL=1"
+    systemctl start signage.service
   else
-    log "LightDM was not restarted. Reboot or restart LightDM when ready to enter signage-session."
+    log "signage.service is enabled but not started. Reboot or run: sudo systemctl start signage"
   fi
 }
 
