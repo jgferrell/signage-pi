@@ -72,7 +72,7 @@ The uninstaller is intended for development iteration. It removes the signage fi
 
 ```text
 /etc/signage/signage.conf
-/etc/lightdm/lightdm.conf.d/50-signage-autologin.conf
+/etc/lightdm/lightdm.conf
 /etc/systemd/system/signage-sync.service
 /etc/systemd/system/signage-sync.timer
 /usr/share/wayland-sessions/signage-session.desktop
@@ -81,6 +81,7 @@ The uninstaller is intended for development iteration. It removes the signage fi
 /usr/local/sbin/signage-sync
 /usr/local/lib/signage/signage-fetch.py
 /var/lib/signage/
+/var/lib/signage/state/lightdm.conf.pre-signage
 /home/signage-user/
 ```
 
@@ -97,3 +98,25 @@ For development cleanup, you may also set:
 ```bash
 RESTART_LIGHTDM_AFTER_UNINSTALL="1"
 ```
+
+
+## LightDM autologin behavior
+
+This installer backs up `/etc/lightdm/lightdm.conf` to `/var/lib/signage/state/lightdm.conf.pre-signage` and then sets the active `[Seat:*]` values directly in `/etc/lightdm/lightdm.conf`:
+
+```ini
+autologin-user=signage-user
+autologin-user-timeout=0
+user-session=signage-session
+autologin-session=signage-session
+```
+
+This is intentional. On Raspberry Pi OS, the stock `/etc/lightdm/lightdm.conf` may already contain an `autologin-user` or session value for the setup user. A drop-in file under `/etc/lightdm/lightdm.conf.d/` may not win if the main config file is read later or already contains conflicting seat values.
+
+After install, verify the effective LightDM configuration with:
+
+```bash
+sudo lightdm --show-config | grep -E 'autologin-user|user-session|autologin-session'
+```
+
+Uninstall restores the backed-up LightDM config file if the backup exists.

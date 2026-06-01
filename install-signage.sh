@@ -123,17 +123,92 @@ install_files() {
   install -m 0644 "${PROJECT_DIR}/files/systemd/signage-sync.timer" /etc/systemd/system/signage-sync.timer
   install -m 0644 "${PROJECT_DIR}/files/wayland-sessions/signage-session.desktop" /usr/share/wayland-sessions/signage-session.desktop
 
-  cat > /etc/lightdm/lightdm.conf.d/50-signage-autologin.conf <<'LIGHTDM'
-[Seat:*]
-autologin-user=signage-user
-autologin-user-timeout=0
-user-session=signage-session
-autologin-session=signage-session
-LIGHTDM
-  chmod 0644 /etc/lightdm/lightdm.conf.d/50-signage-autologin.conf
-
   chown -R root:root /etc/signage /usr/local/lib/signage /var/lib/signage
   chmod 0755 /var/lib/signage /var/lib/signage/releases /var/lib/signage/staging /var/lib/signage/state
+}
+
+configure_lightdm() {
+  log "Configuring LightDM autologin for signage-user/signage-session"
+
+  local lightdm_conf="/etc/lightdm/lightdm.conf"
+  local backup_file="${STATE_DIR}/lightdm.conf.pre-signage"
+  local missing_marker="${STATE_DIR}/lightdm.conf.was-missing"
+
+  # Back up the real LightDM configuration file, because Raspberry Pi OS can set
+  # autologin-user/user-session there. /etc/lightdm/lightdm.conf is read after
+  # many drop-in files, so a drop-in alone may be overridden by the stock config.
+  if [[ ! -e "${backup_file}" && ! -e "${missing_marker}" ]]; then
+    if [[ -f "${lightdm_conf}" ]]; then
+      cp -a "${lightdm_conf}" "${backup_file}"
+    else
+      : > "${missing_marker}"
+    fi
+  fi
+
+  python3 - <<'PY'
+from pathlib import Path
+
+path = Path('/etc/lightdm/lightdm.conf')
+text = path.read_text() if path.exists() else ''
+settings = {
+    'autologin-user': 'signage-user',
+    'autologin-user-timeout': '0',
+    'user-session': 'signage-session',
+    'autologin-session': 'signage-session',
+}
+
+lines = text.splitlines()
+out = []
+in_seat = False
+seen_seat = False
+written = set()
+
+for line in lines:
+    stripped = line.strip()
+
+    if stripped == '[Seat:*]':
+        in_seat = True
+        seen_seat = True
+        out.append(line)
+        continue
+
+    if in_seat and stripped.startswith('[') and stripped.endswith(']'):
+        for key, value in settings.items():
+            if key not in written:
+                out.append(f'{key}={value}')
+                written.add(key)
+        in_seat = False
+
+    if in_seat and '=' in stripped:
+        key = stripped.split('=', 1)[0].strip()
+        if key in settings:
+            out.append(f'{key}={settings[key]}')
+            written.add(key)
+            continue
+
+    out.append(line)
+
+if seen_seat:
+    if in_seat:
+        for key, value in settings.items():
+            if key not in written:
+                out.append(f'{key}={value}')
+                written.add(key)
+else:
+    if out and out[-1].strip():
+        out.append('')
+    out.append('[Seat:*]')
+    for key, value in settings.items():
+        out.append(f'{key}={value}')
+
+path.write_text('\n'.join(out) + '\n')
+PY
+
+  chmod 0644 "${lightdm_conf}"
+
+  # Remove stale copies from earlier development iterations. The canonical
+  # installer-owned LightDM change is now the backed-up edit to lightdm.conf.
+  rm -f /etc/lightdm/lightdm.conf.d/50-signage-autologin.conf
 }
 
 run_initial_sync() {
@@ -167,6 +242,7 @@ main() {
   install_packages
   create_signage_user
   install_files
+  configure_lightdm
   run_initial_sync
   enable_services
 
