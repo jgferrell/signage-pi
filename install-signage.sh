@@ -185,6 +185,35 @@ install_packages() {
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${REQUIRED_PACKAGES[@]}"
 }
 
+print_sshd_auth_debug() {
+  local sshd_bin="$1"
+
+  printf '[install-signage] Effective sshd auth settings:\n' >&2
+  "${sshd_bin}" -T 2>/dev/null | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication|usepam|permitrootlogin)[[:space:]]+' >&2 || true
+
+  printf '[install-signage] Configured sshd auth lines:\n' >&2
+  grep -RInE '^[[:space:]]*(PasswordAuthentication|KbdInteractiveAuthentication|ChallengeResponseAuthentication|UsePAM|PermitRootLogin)[[:space:]]+' \
+    /etc/ssh/sshd_config /etc/ssh/sshd_config.d 2>/dev/null >&2 || true
+}
+
+require_sshd_effective_yes() {
+  local sshd_bin="$1"
+  local key="$2"
+  local label="$3"
+  local effective_config=""
+
+  effective_config="$("${sshd_bin}" -T 2>/dev/null)"
+
+  if ! awk -v key="${key}" '
+    BEGIN { wanted = tolower(key) }
+    tolower($1) == wanted && tolower($2) == "yes" { ok = 1 }
+    END { exit ok ? 0 : 1 }
+  ' <<<"${effective_config}"; then
+    print_sshd_auth_debug "${sshd_bin}"
+    die "Effective sshd configuration does not permit ${label}"
+  fi
+}
+
 configure_ssh() {
   log "Ensuring OpenSSH Server is enabled, running, and permits password authentication"
 
@@ -216,9 +245,9 @@ SSHD_CONFIG
   systemctl is-enabled --quiet ssh.service || die "ssh.service is not enabled"
   systemctl is-active --quiet ssh.service || die "ssh.service is not running"
 
-  if ! "${sshd_bin}" -T | grep -q '^passwordauthentication yes$'; then
-    die "Effective sshd configuration does not permit PasswordAuthentication"
-  fi
+  require_sshd_effective_yes "${sshd_bin}" "passwordauthentication" "PasswordAuthentication"
+  require_sshd_effective_yes "${sshd_bin}" "kbdinteractiveauthentication" "KbdInteractiveAuthentication"
+  require_sshd_effective_yes "${sshd_bin}" "usepam" "UsePAM"
 }
 
 create_signage_user() {
