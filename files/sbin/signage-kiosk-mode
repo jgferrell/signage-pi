@@ -37,6 +37,46 @@ if [[ "${SIGNAGE_SESSION}" != "signage-session" ]]; then
   die "This installer currently requires SIGNAGE_SESSION=\"signage-session\"."
 fi
 
+terminate_local_graphical_sessions() {
+  if ! command -v loginctl >/dev/null 2>&1; then
+    log "loginctl not available; skipping graphical session termination"
+    return 0
+  fi
+
+  local session_id session_type session_remote session_class
+
+  while read -r session_id _; do
+    [[ -n "${session_id:-}" ]] || continue
+
+    session_type="$(loginctl show-session "${session_id}" -p Type --value 2>/dev/null || true)"
+    session_remote="$(loginctl show-session "${session_id}" -p Remote --value 2>/dev/null || true)"
+    session_class="$(loginctl show-session "${session_id}" -p Class --value 2>/dev/null || true)"
+
+    case "${session_type}" in
+      x11|wayland) ;;
+      *) continue ;;
+    esac
+
+    case "${session_remote}" in
+      no|false|False|0|"") ;;
+      *) continue ;;
+    esac
+
+    case "${session_class}" in
+      user|greeter|user-early|"") ;;
+      *) continue ;;
+    esac
+
+    log "Terminating local graphical session ${session_id} (${session_type})"
+    loginctl terminate-session "${session_id}" >/dev/null 2>&1 || true
+  done < <(loginctl list-sessions --no-legend 2>/dev/null || true)
+}
+
+restart_lightdm_now() {
+  log "Restarting LightDM to enter signage mode"
+  systemctl restart lightdm --no-block
+}
+
 log "Enabling LightDM autologin for ${SIGNAGE_USER}/${SIGNAGE_SESSION}"
 
 python3 - <<'PY'
@@ -101,8 +141,8 @@ PY
 chmod 0644 "${LIGHTDM_CONF}"
 
 if [[ "${RESTART_LIGHTDM}" == "1" ]]; then
-  log "Restarting LightDM to enter signage mode"
-  systemctl restart lightdm
+  terminate_local_graphical_sessions
+  restart_lightdm_now
 else
   log "LightDM restart suppressed by --no-restart"
 fi

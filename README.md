@@ -54,6 +54,8 @@ The URL must expose a plain Apache/Nginx-style directory listing with direct lin
 
 The installer adds a `signage.service` kiosk-mode controller. It does not run `feh` directly; it toggles LightDM between the signage autologin session and the normal graphical login screen.
 
+When signage mode is started or stopped, the controller terminates only local graphical sessions reported by `loginctl` as `x11` or `wayland`, then restarts LightDM. This logs out any active desktop GUI session so the signage session owns the display cleanly. SSH sessions and local text TTY sessions are not targeted.
+
 Stop the slideshow and return to the graphical login screen:
 
 ```bash

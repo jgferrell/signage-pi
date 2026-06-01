@@ -8,8 +8,8 @@ Type=oneshot
 RemainAfterExit=yes
 ExecStart=/usr/local/sbin/signage-kiosk-mode
 ExecStop=/usr/local/sbin/signage-admin-mode
-TimeoutStartSec=60
-TimeoutStopSec=60
+TimeoutStartSec=15
+TimeoutStopSec=15
 
 [Install]
 WantedBy=graphical.target
