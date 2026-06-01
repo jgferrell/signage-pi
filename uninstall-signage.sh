@@ -46,6 +46,24 @@ stop_services_and_sessions() {
   fi
 }
 
+restore_lightdm_config() {
+  log "Restoring LightDM configuration"
+
+  local backup_file="/var/lib/signage/state/lightdm.conf.pre-signage"
+  local missing_marker="/var/lib/signage/state/lightdm.conf.was-missing"
+
+  # Remove stale drop-in from earlier development iterations.
+  rm -f /etc/lightdm/lightdm.conf.d/50-signage-autologin.conf
+
+  if [[ -f "${backup_file}" ]]; then
+    cp -a "${backup_file}" /etc/lightdm/lightdm.conf
+  elif [[ -f "${missing_marker}" ]]; then
+    rm -f /etc/lightdm/lightdm.conf
+  else
+    log "No LightDM backup marker found; leaving /etc/lightdm/lightdm.conf unchanged."
+  fi
+}
+
 remove_files() {
   log "Removing signage files"
   rm -f /etc/systemd/system/signage-sync.service
@@ -109,6 +127,7 @@ main() {
   require_root
   load_state_and_config
   stop_services_and_sessions
+  restore_lightdm_config
   remove_files
   remove_user
   remove_packages
