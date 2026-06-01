@@ -1,0 +1,74 @@
+# OS / desktop clutter
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Linux trash / metadata
+.Trash-*
+.directory
+
+# Emacs backup / autosave / lock files
+*~
+\#*\#
+.\#*
+auto-save-list/
+tramp
+.#*
+
+# Vim / swap files, in case used occasionally
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.orig
+*.rej
+
+# Logs
+*.log
+logs/
+
+# Build / output directories
+build/
+dist/
+out/
+target/
+
+# Local env/config files
+.env
+.env.*
+!.env.example
+*.local
+
+# Shell script test/output artifacts
+*.pid
+*.out
+*.err
+
+# Archives / packaged output
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.gz
+
+# Dependency/cache directories
+.cache/
+tmp/
+temp/
+
+# Python cache, if helper scripts are added later
+__pycache__/
+*.py[cod]
+
+# Node cache, if tooling is added later
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor/project config you may not want shared
+.vscode/
+.idea/
