@@ -8,7 +8,7 @@ Target baseline:
 - LightDM active
 - Read-only HTTP/HTTPS directory listing for slide files
 
-This installer creates a dedicated `signage-user`, configures a custom LightDM Wayland session named `signage-session`, downloads slides from a web directory into a local cache, enables a 5-minute sync timer, and ensures OpenSSH Server is installed/running for future maintenance.
+This installer creates a dedicated `signage-user`, configures a custom LightDM Wayland session named `signage-session`, optionally installs a slide-server CA certificate, downloads slides from a web directory into a local cache, enables a resilient 5-minute sync timer, and ensures OpenSSH Server is installed/running for future maintenance.
 
 ## Layout
 
@@ -56,6 +56,14 @@ SLIDES_URL="https://server.company.com/signage/show1"
 
 The URL must expose a plain Apache/Nginx-style directory listing with direct links to image files. The installer fails if the URL is unreachable or if no `feh`-readable image files are found.
 
+If the slide server uses HTTPS with an internal/self-signed CA, provide a URL for a PEM-formatted CA certificate before installing:
+
+```bash
+SLIDES_CA_CERT_URL="http://server.company.com/path/to/company-root-ca.crt"
+```
+
+The installer downloads that certificate, installs it as `/usr/local/share/ca-certificates/signage-slides-ca.crt`, runs `update-ca-certificates`, and then performs the initial slide sync. The certificate URL itself must be reachable using existing system trust, or over HTTP.
+
 ## Controlling signage mode
 
 The installer adds a `signage.service` kiosk-mode controller. It does not run `feh` directly; it toggles LightDM between the signage autologin session and the normal graphical login screen.
@@ -88,7 +96,7 @@ The service is enabled at install time, so a reboot returns the Pi to signage mo
 sudo ./uninstall-signage.sh
 ```
 
-The uninstaller is intended for development iteration. It removes signage program files, disables the sync timer and signage controller, removes `signage-user` if installer state says the user was created by signage, removes the signage SSH drop-in, restores the backed-up LightDM config, and purges `feh`. It also removes other non-SSH packages that the installer recorded as absent before installation.
+The uninstaller is intended for development iteration. It removes signage program files, disables the sync timer and signage controller, removes `signage-user` if installer state says the user was created by signage, removes the signage SSH drop-in, removes the optional signage CA certificate, restores the backed-up LightDM config, and purges `feh`. It also removes other non-SSH packages that the installer recorded as absent before installation.
 
 Normal uninstall preserves local configuration and slideshow cache where practical. To remove all signage-owned config, cache, state, and logs, use purge mode:
 
@@ -115,7 +123,7 @@ The uninstaller does not automatically remove `openssh-server`, even if signage 
 - `/var/lib/signage/current` points to the active local release.
 - Playback uses `/var/lib/signage/current/.playlist.txt`.
 - Slides are ordered alphabetically by filename.
-- Sync runs every 5 minutes.
+- Sync runs every 5 minutes. The timer also schedules a new run 5 minutes after the timer itself is restarted, preventing a stopped/restarted timer from becoming stuck in `active (elapsed)`.
 - Slideshow restarts are throttled to no more than once every 15 minutes.
 - Failed syncs do not disturb the current local slideshow.
 
@@ -124,6 +132,7 @@ The uninstaller does not automatically remove `openssh-server`, even if signage 
 ```text
 /etc/signage/signage.conf
 /etc/ssh/sshd_config.d/99-signage-password-auth.conf
+/usr/local/share/ca-certificates/signage-slides-ca.crt
 /etc/lightdm/lightdm.conf
 /etc/systemd/system/signage.service
 /etc/systemd/system/signage-sync.service
@@ -172,6 +181,16 @@ It also writes this installer-owned drop-in so password authentication is permit
 ```
 
 Uninstall removes that drop-in and reloads SSH. It leaves `openssh-server` installed by default so uninstall does not accidentally remove the operator's remote access path.
+
+## Optional slide-server CA certificate
+
+Set this in `signage.conf` when the slide URL redirects to HTTPS or uses an internal/self-signed certificate chain:
+
+```bash
+SLIDES_CA_CERT_URL="http://server.company.com/path/to/company-root-ca.crt"
+```
+
+The downloaded file must be PEM format and contain `BEGIN CERTIFICATE`. Install records the certificate in installer state. Uninstall removes the installer-managed certificate and runs `update-ca-certificates` again.
 
 ## LightDM autologin behavior
 
