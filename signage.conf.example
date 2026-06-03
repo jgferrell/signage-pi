@@ -5,6 +5,11 @@
 # Read-only access must not require authentication.
 SLIDES_URL="https://server.company.com/signage/show1"
 
+# Optional: URL of a PEM-encoded root/intermediate CA certificate needed to trust
+# the slides server's HTTPS certificate. Leave empty if the server uses a public CA
+# or if no custom CA certificate is needed.
+SLIDES_CA_CERT_URL=""
+
 # Fixed defaults for this project. The installer currently expects these names.
 SIGNAGE_USER="signage-user"
 SIGNAGE_SESSION="signage-session"
