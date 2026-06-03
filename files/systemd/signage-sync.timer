@@ -4,6 +4,7 @@ Documentation=man:systemd.timer(5)
 
 [Timer]
 OnBootSec=2min
+OnActiveSec=5min
 OnUnitActiveSec=5min
 AccuracySec=30s
 Persistent=true

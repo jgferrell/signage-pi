@@ -6,6 +6,7 @@ CONF_SRC="${PROJECT_DIR}/signage.conf"
 STATE_DIR="/var/lib/signage/state"
 STATE_FILE="${STATE_DIR}/install.state"
 SSH_PASSWORD_AUTH_DROPIN="/etc/ssh/sshd_config.d/99-signage-password-auth.conf"
+CA_CERT_PATH="/usr/local/share/ca-certificates/signage-slides-ca.crt"
 REPAIR_MODE="0"
 
 REQUIRED_PACKAGES=(feh ca-certificates python3 openssh-server)
@@ -16,6 +17,8 @@ RESTART_LIGHTDM_AFTER_INSTALL="0"
 PACKAGES_INSTALLED_BY_SIGNAGE=""
 SIGNAGE_USER_CREATED="0"
 SSH_PASSWORD_AUTH_DROPIN_CREATED="0"
+CA_CERT_INSTALLED="0"
+CA_CERT_URL=""
 
 log() { printf '[install-signage] %s\n' "$*"; }
 die() { printf '[install-signage] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -57,6 +60,8 @@ load_existing_state() {
     PACKAGES_INSTALLED_BY_SIGNAGE="${PACKAGES_INSTALLED_BY_SIGNAGE:-}"
     SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED:-0}"
     SSH_PASSWORD_AUTH_DROPIN_CREATED="${SSH_PASSWORD_AUTH_DROPIN_CREATED:-0}"
+    CA_CERT_INSTALLED="${CA_CERT_INSTALLED:-0}"
+    CA_CERT_PATH="${CA_CERT_PATH:-/usr/local/share/ca-certificates/signage-slides-ca.crt}"
   fi
 }
 
@@ -77,6 +82,9 @@ load_config() {
   SIGNAGE_USER="${SIGNAGE_USER:-signage-user}"
   SIGNAGE_SESSION="${SIGNAGE_SESSION:-signage-session}"
   RESTART_LIGHTDM_AFTER_INSTALL="${RESTART_LIGHTDM_AFTER_INSTALL:-0}"
+  SLIDES_CA_CERT_URL="${SLIDES_CA_CERT_URL:-}"
+  CA_CERT_URL="${SLIDES_CA_CERT_URL}"
+  HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-30}"
 
   if [[ "${SIGNAGE_USER}" != "signage-user" ]]; then
     die "This installer currently requires SIGNAGE_USER=\"signage-user\"."
@@ -108,6 +116,8 @@ SIGNAGE_SESSION="${SIGNAGE_SESSION}"
 SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED}"
 PACKAGES_INSTALLED_BY_SIGNAGE="${PACKAGES_INSTALLED_BY_SIGNAGE}"
 SSH_PASSWORD_AUTH_DROPIN_CREATED="${SSH_PASSWORD_AUTH_DROPIN_CREATED}"
+CA_CERT_INSTALLED="${CA_CERT_INSTALLED}"
+CA_CERT_PATH="${CA_CERT_PATH}"
 STATE
   chmod 0644 "${STATE_FILE}"
 }
@@ -129,6 +139,7 @@ find_install_footprints() {
     "/etc/systemd/system/signage-sync.timer"
     "/usr/share/wayland-sessions/signage-session.desktop"
     "${SSH_PASSWORD_AUTH_DROPIN}"
+    "${CA_CERT_PATH}"
   )
 
   local path
@@ -183,6 +194,58 @@ install_packages() {
   log "Installing required packages: ${REQUIRED_PACKAGES[*]}"
   apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${REQUIRED_PACKAGES[@]}"
+}
+
+install_ca_certificate_if_configured() {
+  if [[ -z "${CA_CERT_URL}" ]]; then
+    log "No SLIDES_CA_CERT_URL configured; skipping optional CA certificate install"
+    return 0
+  fi
+
+  log "Installing optional slide-server CA certificate from ${CA_CERT_URL}"
+  install -d -m 0755 "$(dirname "${CA_CERT_PATH}")"
+
+  local tmp
+  tmp="$(mktemp)"
+  if ! python3 - "${CA_CERT_URL}" "${tmp}" "${HTTP_TIMEOUT_SECONDS}" <<'PY'
+import sys
+import urllib.request
+import urllib.error
+
+url, dest, timeout = sys.argv[1], sys.argv[2], int(sys.argv[3])
+req = urllib.request.Request(url, headers={"User-Agent": "digital-signage-install/0.1"})
+try:
+    with urllib.request.urlopen(req, timeout=timeout) as response:
+        data = response.read()
+except urllib.error.HTTPError as exc:
+    print(f"HTTP error {exc.code} {exc.reason} while downloading CA certificate {url}", file=sys.stderr)
+    raise SystemExit(1)
+except urllib.error.URLError as exc:
+    print(f"URL error while downloading CA certificate {url}: {exc.reason}", file=sys.stderr)
+    raise SystemExit(1)
+
+if not data:
+    print(f"CA certificate download was empty: {url}", file=sys.stderr)
+    raise SystemExit(1)
+
+with open(dest, "wb") as fh:
+    fh.write(data)
+PY
+  then
+    rm -f "${tmp}"
+    die "Failed to download CA certificate from SLIDES_CA_CERT_URL=${CA_CERT_URL}"
+  fi
+
+  if ! grep -q 'BEGIN CERTIFICATE' "${tmp}"; then
+    rm -f "${tmp}"
+    die "Downloaded CA certificate must be PEM format and contain BEGIN CERTIFICATE"
+  fi
+
+  install -m 0644 "${tmp}" "${CA_CERT_PATH}"
+  rm -f "${tmp}"
+  update-ca-certificates
+  CA_CERT_INSTALLED="1"
+  write_state
 }
 
 print_sshd_auth_debug() {
@@ -365,6 +428,7 @@ main() {
 
   install_packages
   configure_ssh
+  install_ca_certificate_if_configured
   create_signage_user
   install_files
   configure_lightdm

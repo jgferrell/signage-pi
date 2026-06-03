@@ -3,10 +3,12 @@ set -Eeuo pipefail
 
 STATE_FILE="/var/lib/signage/state/install.state"
 SSH_PASSWORD_AUTH_DROPIN="/etc/ssh/sshd_config.d/99-signage-password-auth.conf"
+CA_CERT_PATH="/usr/local/share/ca-certificates/signage-slides-ca.crt"
 SIGNAGE_USER="signage-user"
 PACKAGES_INSTALLED_BY_SIGNAGE=""
 SIGNAGE_USER_CREATED="1"
 SSH_PASSWORD_AUTH_DROPIN_CREATED="0"
+CA_CERT_INSTALLED="0"
 RESTART_LIGHTDM_AFTER_UNINSTALL="0"
 PURGE_MODE="0"
 KNOWN_INSTALL="0"
@@ -64,6 +66,8 @@ load_state_and_config() {
     PACKAGES_INSTALLED_BY_SIGNAGE="${PACKAGES_INSTALLED_BY_SIGNAGE:-}"
     SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED:-1}"
     SSH_PASSWORD_AUTH_DROPIN_CREATED="${SSH_PASSWORD_AUTH_DROPIN_CREATED:-0}"
+    CA_CERT_INSTALLED="${CA_CERT_INSTALLED:-0}"
+    CA_CERT_PATH="${CA_CERT_PATH:-/usr/local/share/ca-certificates/signage-slides-ca.crt}"
   else
     MANUAL_CONFIRM_STEPS="1"
     log "No install state file found. Signage may not be installed, or the install may be partial/corrupt."
@@ -141,6 +145,17 @@ remove_ssh_config() {
   fi
 
   systemctl reload ssh.service >/dev/null 2>&1 || true
+}
+
+remove_ca_certificate() {
+  if [[ "${CA_CERT_INSTALLED}" != "1" && ! -e "${CA_CERT_PATH}" ]]; then
+    log "No installer-managed CA certificate found."
+    return 0
+  fi
+
+  log "Removing signage slide-server CA certificate"
+  rm -f "${CA_CERT_PATH}"
+  update-ca-certificates >/dev/null 2>&1 || true
 }
 
 remove_program_files() {
@@ -237,6 +252,7 @@ main() {
   run_step "disable signage services and stop the signage user session" stop_services_and_sessions
   run_step "restore the pre-signage LightDM configuration if a backup exists" restore_lightdm_config
   run_step "remove signage's SSH password-authentication drop-in and reload ssh" remove_ssh_config
+  run_step "remove signage's optional slide-server CA certificate and update trust store" remove_ca_certificate
   run_step "remove signage program files, systemd units, and session files" remove_program_files
   run_step "remove the signage-user account if installer state says it was created by signage" remove_user
   run_step "purge feh and other non-SSH packages recorded as installed by signage" remove_packages
