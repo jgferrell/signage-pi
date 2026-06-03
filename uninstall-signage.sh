@@ -105,6 +105,8 @@ run_step() {
 
 stop_services_and_sessions() {
   log "Stopping signage services and user session"
+  systemctl disable --now signage-update.timer >/dev/null 2>&1 || true
+  systemctl stop signage-update.service >/dev/null 2>&1 || true
   systemctl disable --now signage-sync.timer >/dev/null 2>&1 || true
   systemctl stop signage-sync.service >/dev/null 2>&1 || true
   systemctl disable signage.service >/dev/null 2>&1 || true
@@ -163,15 +165,20 @@ remove_program_files() {
   rm -f /etc/systemd/system/signage.service
   rm -f /etc/systemd/system/signage-sync.service
   rm -f /etc/systemd/system/signage-sync.timer
+  rm -f /etc/systemd/system/signage-update.service
+  rm -f /etc/systemd/system/signage-update.timer
   rm -f /etc/lightdm/lightdm.conf.d/50-signage-autologin.conf
   rm -f /usr/share/wayland-sessions/signage-session.desktop
   rm -f /usr/local/lib/signage/signage-fetch.py
   rmdir /usr/local/lib/signage >/dev/null 2>&1 || true
   rm -f /usr/local/sbin/signage-sync
+  rm -f /usr/local/sbin/signage-update
+  rm -f /usr/local/sbin/update-signage
   rm -f /usr/local/sbin/signage-kiosk-mode
   rm -f /usr/local/sbin/signage-admin-mode
   rm -f /usr/local/bin/start-signage
   rm -f /usr/local/bin/signage-session
+  rm -f /usr/local/bin/signagectl
 
   systemctl daemon-reload
 }
@@ -181,6 +188,8 @@ remove_state_for_normal_uninstall() {
   rm -f "${STATE_FILE}"
   rm -f /var/lib/signage/state/lightdm.conf.pre-signage
   rm -f /var/lib/signage/state/lightdm.conf.was-missing
+  rm -f /var/lib/signage/state/installed-commit
+  rm -f /var/lib/signage/state/update.lock
   rmdir /var/lib/signage/state >/dev/null 2>&1 || true
 }
 

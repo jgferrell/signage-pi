@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+CONFIG_FILE="/etc/signage/signage.conf"
+BASE_DIR="/var/lib/signage"
+STATE_DIR="${BASE_DIR}/state"
+UPDATE_DIR="${BASE_DIR}/update"
+REPO_DIR="${UPDATE_DIR}/repo"
+INSTALLED_COMMIT_FILE="${STATE_DIR}/installed-commit"
+LOCK_FILE="${STATE_DIR}/update.lock"
+
+SIGNAGE_AUTO_UPDATE_REPO_URL=""
+SIGNAGE_AUTO_UPDATE_REF="HEAD"
+
+log() { printf '[signage-update] %s\n' "$*" >&2; }
+die() { printf '[signage-update] ERROR: %s\n' "$*" >&2; exit 1; }
+
+require_root() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    die "Run this updater as root, for example: sudo signagectl update"
+  fi
+}
+
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || die "Required command not found: $1"
+}
+
+load_config() {
+  [[ -f "${CONFIG_FILE}" ]] || die "Missing ${CONFIG_FILE}"
+  # shellcheck source=/dev/null
+  source "${CONFIG_FILE}"
+
+  SIGNAGE_AUTO_UPDATE_REPO_URL="${SIGNAGE_AUTO_UPDATE_REPO_URL:-}"
+  SIGNAGE_AUTO_UPDATE_REF="${SIGNAGE_AUTO_UPDATE_REF:-HEAD}"
+
+  [[ -n "${SIGNAGE_AUTO_UPDATE_REPO_URL}" ]] || die "SIGNAGE_AUTO_UPDATE_REPO_URL must be set before updates can run"
+  [[ -n "${SIGNAGE_AUTO_UPDATE_REF}" ]] || die "SIGNAGE_AUTO_UPDATE_REF must not be empty"
+}
+
+prepare_repo() {
+  install -d -m 0755 "${STATE_DIR}" "${UPDATE_DIR}"
+
+  exec 9>"${LOCK_FILE}"
+  if ! flock -n 9; then
+    log "Another update is already running; exiting."
+    exit 0
+  fi
+
+  if [[ ! -d "${REPO_DIR}/.git" ]]; then
+    log "Creating local update clone from ${SIGNAGE_AUTO_UPDATE_REPO_URL}"
+    rm -rf "${REPO_DIR}.tmp"
+    git clone --no-checkout "${SIGNAGE_AUTO_UPDATE_REPO_URL}" "${REPO_DIR}.tmp"
+    mv "${REPO_DIR}.tmp" "${REPO_DIR}"
+  fi
+
+  cd "${REPO_DIR}"
+  git remote set-url origin "${SIGNAGE_AUTO_UPDATE_REPO_URL}"
+}
+
+fetch_target_commit() {
+  local ref="$1"
+  local target=""
+
+  log "Fetching updates from ${SIGNAGE_AUTO_UPDATE_REPO_URL}"
+  git fetch --prune --tags origin
+
+  if [[ "${ref}" == "HEAD" ]]; then
+    git remote set-head origin -a >/dev/null 2>&1 || true
+    target="$(git rev-parse --verify 'refs/remotes/origin/HEAD^{commit}' 2>/dev/null || true)"
+    if [[ -z "${target}" ]]; then
+      target="$(git rev-parse --verify 'FETCH_HEAD^{commit}' 2>/dev/null || true)"
+    fi
+  else
+    target="$(git rev-parse --verify "refs/remotes/origin/${ref}^{commit}" 2>/dev/null || true)"
+    if [[ -z "${target}" ]]; then
+      target="$(git rev-parse --verify "refs/tags/${ref}^{commit}" 2>/dev/null || true)"
+    fi
+    if [[ -z "${target}" ]]; then
+      target="$(git rev-parse --verify "${ref}^{commit}" 2>/dev/null || true)"
+    fi
+  fi
+
+  [[ -n "${target}" ]] || die "Could not resolve update ref '${ref}' to a commit"
+  printf '%s\n' "${target}"
+}
+
+run_update_script() {
+  local target_commit="$1"
+
+  log "Checking out ${target_commit}"
+  git checkout --force --detach "${target_commit}"
+
+  if [[ ! -f ./update-signage.sh ]]; then
+    die "Fetched repo does not contain update-signage.sh"
+  fi
+
+  log "Running update-signage.sh"
+  bash ./update-signage.sh
+}
+
+main() {
+  require_root
+  require_cmd git
+  load_config
+  prepare_repo
+
+  local target_commit installed_commit
+  target_commit="$(fetch_target_commit "${SIGNAGE_AUTO_UPDATE_REF}")"
+  installed_commit="$(cat "${INSTALLED_COMMIT_FILE}" 2>/dev/null || true)"
+
+  if [[ "${target_commit}" == "${installed_commit}" ]]; then
+    log "Already up to date at ${target_commit}."
+    exit 0
+  fi
+
+  log "Update available."
+  log "Installed: ${installed_commit:-none}"
+  log "Target:    ${target_commit}"
+
+  run_update_script "${target_commit}"
+  printf '%s\n' "${target_commit}" > "${INSTALLED_COMMIT_FILE}"
+  chmod 0644 "${INSTALLED_COMMIT_FILE}"
+
+  log "Update completed successfully: ${target_commit}"
+}
+
+main "$@"

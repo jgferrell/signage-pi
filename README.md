@@ -19,6 +19,7 @@ signage.conf.example
 files/
   bin/
     signage-session
+    signagectl
     start-signage
   lib/
     signage-fetch.py
@@ -26,10 +27,12 @@ files/
     signage-admin-mode
     signage-kiosk-mode
     signage-sync
+    signage-update
   systemd/
     signage.service
     signage-sync.service
     signage-sync.timer
+    signage-update.service
   wayland-sessions/
     signage-session.desktop
 ```
@@ -73,22 +76,81 @@ When signage mode is started or stopped, the controller terminates only local gr
 Stop the slideshow and return to the graphical login screen:
 
 ```bash
-sudo systemctl stop signage
+sudo signagectl stop
 ```
 
 Start the slideshow again:
 
 ```bash
-sudo systemctl start signage
+sudo signagectl start
 ```
 
 Restart kiosk mode:
 
 ```bash
-sudo systemctl restart signage
+sudo signagectl restart
 ```
 
-The service is enabled at install time, so a reboot returns the Pi to signage mode even if `sudo systemctl stop signage` was used for local administration.
+Run a slide sync immediately and restart the display if signage mode is active:
+
+```bash
+sudo signagectl reload
+```
+
+Check service and timer status:
+
+```bash
+signagectl status
+```
+
+The service is enabled at install time, so a reboot returns the Pi to signage mode even if `sudo signagectl stop` was used for local administration.
+
+
+## Software updates
+
+Software updates are opt-in. When enabled, the Pi can fetch updated signage player software from a trusted Git repository and apply it using the repository's `update-signage.sh` script.
+
+Set these values in `signage.conf` before installing, or edit `/etc/signage/signage.conf` later:
+
+```bash
+SIGNAGE_AUTO_UPDATE_ENABLED="false"
+SIGNAGE_AUTO_UPDATE_REPO_URL=""
+SIGNAGE_AUTO_UPDATE_REF="HEAD"
+SIGNAGE_AUTO_UPDATE_ONCALENDAR="Tue *-*-* 03:00:00"
+SIGNAGE_CONFIG_PRESERVE_KEYS="SLIDES_URL"
+```
+
+`SIGNAGE_AUTO_UPDATE_ENABLED="true"` enables the scheduled update timer. The default schedule checks once a week on Tuesday at 3:00 AM local time. `SIGNAGE_AUTO_UPDATE_ONCALENDAR` accepts a systemd `OnCalendar` expression.
+
+`SIGNAGE_AUTO_UPDATE_REPO_URL` should point to the Git repository that the Pi should use for software updates, for example:
+
+```bash
+SIGNAGE_AUTO_UPDATE_REPO_URL="http://server.local/git/signage-pi.git"
+```
+
+`SIGNAGE_AUTO_UPDATE_REF="HEAD"` tracks the default branch advertised by the configured Git repository. You can also set a branch, tag, or other resolvable ref, such as `live`, `main`, or `stable`.
+
+Enabling software updates allows the Pi to download and run code from the configured repository. Use only a trusted repository.
+
+To manually trigger a software update check:
+
+```bash
+sudo signagectl update
+```
+
+Manual update checks require `SIGNAGE_AUTO_UPDATE_REPO_URL` to be set. They do not require the scheduled update timer to be enabled.
+
+### Config preservation during updates
+
+During a software update, the repository's `signage.conf.example` becomes the new base config. Values listed in `SIGNAGE_CONFIG_PRESERVE_KEYS` are copied forward from the existing Pi-local `/etc/signage/signage.conf`.
+
+The default preserve list is:
+
+```bash
+SIGNAGE_CONFIG_PRESERVE_KEYS="SLIDES_URL"
+```
+
+This prevents an update from replacing the Pi's slide URL with a generic or fleet-default value. Add additional keys to the preserve list if they should remain Pi-local.
 
 ## Uninstall
 
@@ -137,12 +199,17 @@ The uninstaller does not automatically remove `openssh-server`, even if signage 
 /etc/systemd/system/signage.service
 /etc/systemd/system/signage-sync.service
 /etc/systemd/system/signage-sync.timer
+/etc/systemd/system/signage-update.service
+/etc/systemd/system/signage-update.timer
 /usr/share/wayland-sessions/signage-session.desktop
 /usr/local/bin/signage-session
+/usr/local/bin/signagectl
 /usr/local/bin/start-signage
 /usr/local/sbin/signage-admin-mode
 /usr/local/sbin/signage-kiosk-mode
 /usr/local/sbin/signage-sync
+/usr/local/sbin/signage-update
+/usr/local/sbin/update-signage
 /usr/local/lib/signage/signage-fetch.py
 /var/lib/signage/
 /var/log/signage/

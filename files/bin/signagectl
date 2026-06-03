@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+usage() {
+  cat <<'USAGE'
+Usage: signagectl <command>
+
+Commands:
+  start     Start signage kiosk mode and the slide sync timer.
+  stop      Stop signage kiosk mode and the slide sync timer.
+  restart   Restart signage kiosk mode.
+  reload    Run slide sync immediately, then restart signage if it is active.
+  update    Run a software update check immediately.
+  status    Show signage service and timer status.
+  help      Show this help.
+USAGE
+}
+
+die() { printf 'signagectl: ERROR: %s\n' "$*" >&2; exit 1; }
+
+require_root_for_action() {
+  if [[ "${EUID}" -ne 0 ]]; then
+    die "Run this command as root, for example: sudo signagectl $1"
+  fi
+}
+
+cmd="${1:-help}"
+
+case "${cmd}" in
+  start)
+    require_root_for_action "start"
+    systemctl start signage.service
+    systemctl enable --now signage-sync.timer
+    ;;
+  stop)
+    require_root_for_action "stop"
+    systemctl disable --now signage-sync.timer >/dev/null 2>&1 || true
+    systemctl stop signage-sync.service >/dev/null 2>&1 || true
+    systemctl stop signage.service
+    ;;
+  restart)
+    require_root_for_action "restart"
+    systemctl restart signage.service
+    ;;
+  reload)
+    require_root_for_action "reload"
+    systemctl start signage-sync.service
+    if systemctl is-active --quiet signage.service; then
+      systemctl restart signage.service
+    fi
+    ;;
+  update)
+    require_root_for_action "update"
+    systemctl start signage-update.service
+    ;;
+  status)
+    systemctl status --no-pager signage.service signage-sync.timer signage-sync.service signage-update.timer signage-update.service
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    die "Unknown command: ${cmd}"
+    ;;
+esac

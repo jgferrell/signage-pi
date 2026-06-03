@@ -27,6 +27,28 @@ KEEP_RELEASES="5"
 # Files are then validated with feh before promotion.
 IMAGE_EXTENSIONS="png jpg jpeg gif bmp webp tif tiff xpm pnm pbm pgm ppm"
 
+
+# Optional automatic signage player software updates.
+# WARNING: enabling this allows the device to download and run code from
+# the configured repository. Use only with a trusted repository.
+SIGNAGE_AUTO_UPDATE_ENABLED="false"
+
+# Git repository containing the signage player software.
+SIGNAGE_AUTO_UPDATE_REPO_URL=""
+
+# Branch, tag, or HEAD to track for automatic software updates.
+# HEAD means "use the default branch advertised by the configured Git repo."
+SIGNAGE_AUTO_UPDATE_REF="HEAD"
+
+# systemd OnCalendar expression for automatic update checks.
+# Default: Tuesday at 3:00 AM local time.
+SIGNAGE_AUTO_UPDATE_ONCALENDAR="Tue *-*-* 03:00:00"
+
+# Space-separated config keys that should retain the Pi-local value during
+# software updates. Use this for per-device settings that must not be reset
+# to repo defaults.
+SIGNAGE_CONFIG_PRESERVE_KEYS="SLIDES_URL"
+
 # Safety default: do not restart LightDM during install/uninstall.
 # Set to 1 during development if you want the graphical login manager restarted automatically.
 RESTART_LIGHTDM_AFTER_INSTALL="0"

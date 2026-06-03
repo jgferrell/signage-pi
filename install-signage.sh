@@ -9,7 +9,7 @@ SSH_PASSWORD_AUTH_DROPIN="/etc/ssh/sshd_config.d/99-signage-password-auth.conf"
 CA_CERT_PATH="/usr/local/share/ca-certificates/signage-slides-ca.crt"
 REPAIR_MODE="0"
 
-REQUIRED_PACKAGES=(feh ca-certificates python3 openssh-server)
+REQUIRED_PACKAGES=(feh ca-certificates python3 git openssh-server)
 
 SIGNAGE_USER="signage-user"
 SIGNAGE_SESSION="signage-session"
@@ -19,6 +19,11 @@ SIGNAGE_USER_CREATED="0"
 SSH_PASSWORD_AUTH_DROPIN_CREATED="0"
 CA_CERT_INSTALLED="0"
 CA_CERT_URL=""
+SIGNAGE_AUTO_UPDATE_ENABLED="false"
+SIGNAGE_AUTO_UPDATE_ONCALENDAR="Tue *-*-* 03:00:00"
+SIGNAGE_AUTO_UPDATE_REPO_URL=""
+SIGNAGE_AUTO_UPDATE_REF="HEAD"
+SIGNAGE_CONFIG_PRESERVE_KEYS="SLIDES_URL"
 
 log() { printf '[install-signage] %s\n' "$*"; }
 die() { printf '[install-signage] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -85,6 +90,11 @@ load_config() {
   SLIDES_CA_CERT_URL="${SLIDES_CA_CERT_URL:-}"
   CA_CERT_URL="${SLIDES_CA_CERT_URL}"
   HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-30}"
+  SIGNAGE_AUTO_UPDATE_ENABLED="${SIGNAGE_AUTO_UPDATE_ENABLED:-false}"
+  SIGNAGE_AUTO_UPDATE_ONCALENDAR="${SIGNAGE_AUTO_UPDATE_ONCALENDAR:-Tue *-*-* 03:00:00}"
+  SIGNAGE_AUTO_UPDATE_REPO_URL="${SIGNAGE_AUTO_UPDATE_REPO_URL:-}"
+  SIGNAGE_AUTO_UPDATE_REF="${SIGNAGE_AUTO_UPDATE_REF:-HEAD}"
+  SIGNAGE_CONFIG_PRESERVE_KEYS="${SIGNAGE_CONFIG_PRESERVE_KEYS:-SLIDES_URL}"
 
   if [[ "${SIGNAGE_USER}" != "signage-user" ]]; then
     die "This installer currently requires SIGNAGE_USER=\"signage-user\"."
@@ -130,13 +140,18 @@ find_install_footprints() {
     "/var/log/signage"
     "/usr/local/lib/signage/signage-fetch.py"
     "/usr/local/sbin/signage-sync"
+    "/usr/local/sbin/signage-update"
+    "/usr/local/sbin/update-signage"
     "/usr/local/sbin/signage-kiosk-mode"
     "/usr/local/sbin/signage-admin-mode"
     "/usr/local/bin/start-signage"
     "/usr/local/bin/signage-session"
+    "/usr/local/bin/signagectl"
     "/etc/systemd/system/signage.service"
     "/etc/systemd/system/signage-sync.service"
     "/etc/systemd/system/signage-sync.timer"
+    "/etc/systemd/system/signage-update.service"
+    "/etc/systemd/system/signage-update.timer"
     "/usr/share/wayland-sessions/signage-session.desktop"
     "${SSH_PASSWORD_AUTH_DROPIN}"
     "${CA_CERT_PATH}"
@@ -354,6 +369,7 @@ install_files() {
   install -d -m 0755 /var/lib/signage/releases
   install -d -m 0755 /var/lib/signage/staging
   install -d -m 0755 /var/lib/signage/state
+  install -d -m 0755 /var/lib/signage/update
   install -d -m 0755 /var/log/signage
 
   install -m 0644 "${CONF_SRC}" /etc/signage/signage.conf
@@ -361,15 +377,19 @@ install_files() {
   install -m 0755 "${PROJECT_DIR}/files/sbin/signage-sync" /usr/local/sbin/signage-sync
   install -m 0755 "${PROJECT_DIR}/files/sbin/signage-kiosk-mode" /usr/local/sbin/signage-kiosk-mode
   install -m 0755 "${PROJECT_DIR}/files/sbin/signage-admin-mode" /usr/local/sbin/signage-admin-mode
+  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-update" /usr/local/sbin/signage-update
+  install -m 0755 "${PROJECT_DIR}/update-signage.sh" /usr/local/sbin/update-signage
   install -m 0755 "${PROJECT_DIR}/files/bin/start-signage" /usr/local/bin/start-signage
   install -m 0755 "${PROJECT_DIR}/files/bin/signage-session" /usr/local/bin/signage-session
+  install -m 0755 "${PROJECT_DIR}/files/bin/signagectl" /usr/local/bin/signagectl
   install -m 0644 "${PROJECT_DIR}/files/systemd/signage.service" /etc/systemd/system/signage.service
   install -m 0644 "${PROJECT_DIR}/files/systemd/signage-sync.service" /etc/systemd/system/signage-sync.service
   install -m 0644 "${PROJECT_DIR}/files/systemd/signage-sync.timer" /etc/systemd/system/signage-sync.timer
+  install -m 0644 "${PROJECT_DIR}/files/systemd/signage-update.service" /etc/systemd/system/signage-update.service
   install -m 0644 "${PROJECT_DIR}/files/wayland-sessions/signage-session.desktop" /usr/share/wayland-sessions/signage-session.desktop
 
   chown -R root:root /etc/signage /usr/local/lib/signage /var/lib/signage /var/log/signage
-  chmod 0755 /var/lib/signage /var/lib/signage/releases /var/lib/signage/staging /var/lib/signage/state /var/log/signage
+  chmod 0755 /var/lib/signage /var/lib/signage/releases /var/lib/signage/staging /var/lib/signage/state /var/lib/signage/update /var/log/signage
   write_state
 }
 
@@ -405,11 +425,56 @@ run_initial_sync() {
   fi
 }
 
+as_bool() {
+  case "${1,,}" in
+    1|yes|true|on|enabled) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+write_update_timer() {
+  cat > /etc/systemd/system/signage-update.timer <<EOF_TIMER
+[Unit]
+Description=Run Digital Signage software update check
+Documentation=man:systemd.timer(5)
+
+[Timer]
+OnCalendar=${SIGNAGE_AUTO_UPDATE_ONCALENDAR}
+Persistent=true
+Unit=signage-update.service
+
+[Install]
+WantedBy=timers.target
+EOF_TIMER
+  chmod 0644 /etc/systemd/system/signage-update.timer
+}
+
+record_source_commit_if_available() {
+  if command -v git >/dev/null 2>&1 && [[ -d "${PROJECT_DIR}/.git" ]]; then
+    local source_commit
+    source_commit="$(git -C "${PROJECT_DIR}" rev-parse --verify HEAD 2>/dev/null || true)"
+    if [[ -n "${source_commit}" ]]; then
+      printf '%s\n' "${source_commit}" > "${STATE_DIR}/installed-commit"
+      chmod 0644 "${STATE_DIR}/installed-commit"
+    fi
+  fi
+}
+
 enable_services() {
   log "Enabling signage services"
+  write_update_timer
   systemctl daemon-reload
   systemctl enable signage.service
   systemctl enable --now signage-sync.timer
+
+  if as_bool "${SIGNAGE_AUTO_UPDATE_ENABLED}"; then
+    if [[ -z "${SIGNAGE_AUTO_UPDATE_REPO_URL}" ]]; then
+      die "SIGNAGE_AUTO_UPDATE_ENABLED is true but SIGNAGE_AUTO_UPDATE_REPO_URL is empty"
+    fi
+    systemctl enable --now signage-update.timer
+  else
+    systemctl disable --now signage-update.timer >/dev/null 2>&1 || true
+  fi
 
   if [[ "${RESTART_LIGHTDM_AFTER_INSTALL}" == "1" ]]; then
     log "Starting signage.service because RESTART_LIGHTDM_AFTER_INSTALL=1"
@@ -434,6 +499,7 @@ main() {
   configure_lightdm
   run_initial_sync
   enable_services
+  record_source_commit_if_available
   write_state
 
   log "Install complete. Current local slideshow: /var/lib/signage/current"
