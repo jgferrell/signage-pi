@@ -41,7 +41,7 @@ files/
     signage-sync.service
     signage-sync.timer
     signage-update.service
-    signage-update.timer
+    # signage-update.timer is generated during install from SIGNAGE_AUTO_UPDATE_ONCALENDAR.
   wayland-sessions/
     signage-session.desktop
 ```
@@ -62,7 +62,7 @@ At minimum, set the slide source:
 SLIDES_URL="https://server.local/signage/show1"
 ```
 
-The URL must expose a plain Apache/Nginx-style directory listing with direct links to image files. The installer fails if the URL is unreachable or if no `feh`-readable image files are found.
+The URL must expose a plain Apache/Nginx-style directory listing with direct links to image files. The fetcher only considers image links directly inside that directory listing, not nested subdirectories. The installer fails if the URL is unreachable or if no `feh`-readable image files are found.
 
 The installer enables `signage.service` but does not start it or restart LightDM by default. To enter signage mode after installation, reboot the Pi or run:
 
@@ -128,7 +128,7 @@ signagectl status
 
 The service is enabled at install time, so a reboot returns the Pi to signage mode even if `sudo signagectl stop` was used for local administration.
 
-Lower-level commands such as `signage-admin-mode`, `signage-kiosk-mode`, `signage-sync`, `signage-update`, and `update-signage` are installed as helper commands. Prefer `signagectl` for routine operation.
+Lower-level commands such as `signage-admin-mode`, `signage-kiosk-mode`, `signage-sync`, and `signage-update` are installed as helper commands. Prefer `signagectl` for routine operation.
 
 ## Configuration: `signage.conf`
 
@@ -158,7 +158,7 @@ SLIDES_URL="https://server.company.com/signage/show1"
 
 `SLIDES_URL` is the HTTP/HTTPS directory listing used as the slideshow source.
 
-The URL must expose direct links to image files. The fetcher discovers candidate files by filename extension, downloads them, validates them with `feh --list`, and promotes only valid slide sets into the local release cache.
+The URL must expose direct links to image files in the top-level directory listing. The fetcher discovers candidate files by filename extension, does not recurse into nested subdirectories, downloads candidate files, validates them with `feh --list`, and promotes only valid slide sets into the local release cache.
 
 ### Playback settings
 
@@ -169,7 +169,7 @@ SLIDESHOW_DELAY_SECONDS="8"
 Controls how long each slide is shown during playback.
 
 ```bash
-IMAGE_EXTENSIONS="png jpg jpeg gif bmp"
+IMAGE_EXTENSIONS="png jpg jpeg gif bmp webp tif tiff xpm pnm pbm pgm ppm"
 ```
 
 Controls which filename extensions are considered candidate slide files when reading the remote directory listing.
