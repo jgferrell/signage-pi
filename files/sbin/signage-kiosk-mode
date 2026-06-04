@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-CONFIG_FILE="/etc/signage/signage.conf"
 LIGHTDM_CONF="/etc/lightdm/lightdm.conf"
 SIGNAGE_USER="signage-user"
 SIGNAGE_SESSION="signage-session"
@@ -21,20 +20,6 @@ done
 
 if [[ "${EUID}" -ne 0 ]]; then
   die "Run as root, for example: sudo signage-kiosk-mode"
-fi
-
-if [[ -f "${CONFIG_FILE}" ]]; then
-  # shellcheck source=/dev/null
-  source "${CONFIG_FILE}" || true
-  SIGNAGE_USER="${SIGNAGE_USER:-signage-user}"
-  SIGNAGE_SESSION="${SIGNAGE_SESSION:-signage-session}"
-fi
-
-if [[ "${SIGNAGE_USER}" != "signage-user" ]]; then
-  die "This installer currently requires SIGNAGE_USER=\"signage-user\"."
-fi
-if [[ "${SIGNAGE_SESSION}" != "signage-session" ]]; then
-  die "This installer currently requires SIGNAGE_SESSION=\"signage-session\"."
 fi
 
 terminate_local_graphical_sessions() {

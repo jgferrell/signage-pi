@@ -33,7 +33,9 @@ done
 source "${CONFIG_FILE}"
 
 : "${SLIDES_URL:?SLIDES_URL must be set in ${CONFIG_FILE}}"
-SIGNAGE_USER="${SIGNAGE_USER:-signage-user}"
+# Ignore any legacy SIGNAGE_USER value in signage.conf.
+# The runtime account name is an internal implementation detail.
+SIGNAGE_USER="signage-user"
 SLIDESHOW_DELAY_SECONDS="${SLIDESHOW_DELAY_SECONDS:-8}"
 RESTART_THROTTLE_SECONDS="${RESTART_THROTTLE_SECONDS:-900}"
 HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-30}"

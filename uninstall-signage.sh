@@ -54,7 +54,8 @@ load_state_and_config() {
   if [[ -f /etc/signage/signage.conf ]]; then
     # shellcheck source=/dev/null
     source /etc/signage/signage.conf || true
-    SIGNAGE_USER="${SIGNAGE_USER:-signage-user}"
+    # Ignore any legacy SIGNAGE_USER value in signage.conf.
+    SIGNAGE_USER="signage-user"
     RESTART_LIGHTDM_AFTER_UNINSTALL="${RESTART_LIGHTDM_AFTER_UNINSTALL:-0}"
   fi
 
@@ -62,7 +63,8 @@ load_state_and_config() {
     KNOWN_INSTALL="1"
     # shellcheck source=/dev/null
     source "${STATE_FILE}"
-    SIGNAGE_USER="${SIGNAGE_USER:-signage-user}"
+    # User name is fixed; old state files may contain it, but it is not configurable.
+    SIGNAGE_USER="signage-user"
     PACKAGES_INSTALLED_BY_SIGNAGE="${PACKAGES_INSTALLED_BY_SIGNAGE:-}"
     SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED:-1}"
     SSH_PASSWORD_AUTH_DROPIN_CREATED="${SSH_PASSWORD_AUTH_DROPIN_CREATED:-0}"

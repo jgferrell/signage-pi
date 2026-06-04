@@ -10,10 +10,6 @@ SLIDES_URL="https://server.company.com/signage/show1"
 # or if no custom CA certificate is needed.
 SLIDES_CA_CERT_URL=""
 
-# Fixed defaults for this project. The installer currently expects these names.
-SIGNAGE_USER="signage-user"
-SIGNAGE_SESSION="signage-session"
-
 # Playback behavior.
 SLIDESHOW_DELAY_SECONDS="8"
 
