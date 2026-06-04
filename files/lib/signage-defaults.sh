@@ -1,0 +1,19 @@
+# Shared defaults for digital-signage scripts.
+# This file is sourced by shell scripts; keep values shell-safe.
+
+SIGNAGE_USER_DEFAULT="signage-user"
+SIGNAGE_SESSION_DEFAULT="signage-session"
+SIGNAGE_INSTALL_VERSION="2026-06-01"
+
+SLIDESHOW_DELAY_SECONDS_DEFAULT="8"
+RESTART_THROTTLE_SECONDS_DEFAULT="900"
+HTTP_TIMEOUT_SECONDS_DEFAULT="30"
+KEEP_RELEASES_DEFAULT="5"
+IMAGE_EXTENSIONS_DEFAULT="png jpg jpeg gif bmp webp tif tiff xpm pnm pbm pgm ppm"
+
+SIGNAGE_AUTO_UPDATE_ENABLED_DEFAULT="false"
+SIGNAGE_AUTO_UPDATE_ONCALENDAR_DEFAULT="Tue *-*-* 03:00:00"
+SIGNAGE_AUTO_UPDATE_REF_DEFAULT="HEAD"
+SIGNAGE_CONFIG_PRESERVE_KEYS_DEFAULT="SLIDES_URL"
+
+CA_CERT_PATH_DEFAULT="/usr/local/share/ca-certificates/signage-slides-ca.crt"

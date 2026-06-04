@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+LIGHTDM_CONF="/etc/lightdm/lightdm.conf"
+DEFAULTS_FILE="/usr/local/lib/signage/signage-defaults.sh"
+SIGNAGE_USER="signage-user"
+SIGNAGE_SESSION="signage-session"
+RESTART_LIGHTDM="1"
+MODE=""
+
+if [[ -f "${DEFAULTS_FILE}" ]]; then
+  # shellcheck source=/usr/local/lib/signage/signage-defaults.sh
+  source "${DEFAULTS_FILE}"
+  SIGNAGE_USER="${SIGNAGE_USER_DEFAULT}"
+  SIGNAGE_SESSION="${SIGNAGE_SESSION_DEFAULT}"
+fi
+
+log() { printf '[signage-mode] %s\n' "$*"; }
+die() { printf '[signage-mode] ERROR: %s\n' "$*" >&2; exit 1; }
+
+usage() {
+  cat <<'USAGE'
+Usage: signage-mode <kiosk|admin> [--restart|--no-restart]
+
+Modes:
+  kiosk   Configure LightDM to autologin to the signage session.
+  admin   Remove signage autologin from LightDM.
+
+Options:
+  --restart     Restart LightDM after changing mode. This is the default.
+  --no-restart  Change LightDM config without restarting LightDM.
+USAGE
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    kiosk|admin)
+      [[ -z "${MODE}" ]] || die "Mode was specified more than once"
+      MODE="$1"
+      ;;
+    --no-restart) RESTART_LIGHTDM="0" ;;
+    --restart) RESTART_LIGHTDM="1" ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "Unknown argument: $1" ;;
+  esac
+  shift
+done
+
+[[ -n "${MODE}" ]] || { usage >&2; exit 2; }
+
+if [[ "${EUID}" -ne 0 ]]; then
+  die "Run as root, for example: sudo signage-mode ${MODE}"
+fi
+
+terminate_local_graphical_sessions() {
+  if ! command -v loginctl >/dev/null 2>&1; then
+    log "loginctl not available; skipping graphical session termination"
+    return 0
+  fi
+
+  local session_id session_type session_remote session_class
+
+  while read -r session_id _; do
+    [[ -n "${session_id:-}" ]] || continue
+
+    session_type="$(loginctl show-session "${session_id}" -p Type --value 2>/dev/null || true)"
+    session_remote="$(loginctl show-session "${session_id}" -p Remote --value 2>/dev/null || true)"
+    session_class="$(loginctl show-session "${session_id}" -p Class --value 2>/dev/null || true)"
+
+    case "${session_type}" in
+      x11|wayland) ;;
+      *) continue ;;
+    esac
+
+    case "${session_remote}" in
+      no|false|False|0|"") ;;
+      *) continue ;;
+    esac
+
+    case "${session_class}" in
+      user|greeter|user-early|"") ;;
+      *) continue ;;
+    esac
+
+    log "Terminating local graphical session ${session_id} (${session_type})"
+    loginctl terminate-session "${session_id}" >/dev/null 2>&1 || true
+  done < <(loginctl list-sessions --no-legend 2>/dev/null || true)
+}
+
+shutdown_in_progress() {
+  systemctl list-jobs --no-legend 2>/dev/null | grep -Eq '(reboot|poweroff|halt|shutdown)\.target'
+}
+
+restart_lightdm_now() {
+  if shutdown_in_progress; then
+    log "Shutdown/reboot appears to be in progress; skipping LightDM restart"
+    return 0
+  fi
+
+  case "${MODE}" in
+    kiosk) log "Restarting LightDM to enter signage mode" ;;
+    admin) log "Restarting LightDM to show the graphical login screen" ;;
+  esac
+  systemctl restart lightdm --no-block
+}
+
+configure_kiosk_mode() {
+  log "Enabling LightDM autologin for ${SIGNAGE_USER}/${SIGNAGE_SESSION}"
+
+  python3 - <<PY
+from pathlib import Path
+
+path = Path('${LIGHTDM_CONF}')
+text = path.read_text() if path.exists() else ''
+settings = {
+    'autologin-user': '${SIGNAGE_USER}',
+    'autologin-user-timeout': '0',
+    'user-session': '${SIGNAGE_SESSION}',
+    'autologin-session': '${SIGNAGE_SESSION}',
+}
+
+lines = text.splitlines()
+out = []
+in_seat = False
+seen_seat = False
+written = set()
+
+for line in lines:
+    stripped = line.strip()
+
+    if stripped == '[Seat:*]':
+        in_seat = True
+        seen_seat = True
+        out.append(line)
+        continue
+
+    if in_seat and stripped.startswith('[') and stripped.endswith(']'):
+        for key, value in settings.items():
+            if key not in written:
+                out.append(f'{key}={value}')
+                written.add(key)
+        in_seat = False
+
+    if in_seat and '=' in stripped:
+        key = stripped.split('=', 1)[0].strip()
+        if key in settings:
+            out.append(f'{key}={settings[key]}')
+            written.add(key)
+            continue
+
+    out.append(line)
+
+if seen_seat:
+    if in_seat:
+        for key, value in settings.items():
+            if key not in written:
+                out.append(f'{key}={value}')
+                written.add(key)
+else:
+    if out and out[-1].strip():
+        out.append('')
+    out.append('[Seat:*]')
+    for key, value in settings.items():
+        out.append(f'{key}={value}')
+
+path.write_text('\n'.join(out) + '\n')
+PY
+}
+
+configure_admin_mode() {
+  log "Disabling LightDM signage autologin"
+
+  python3 - <<PY
+from pathlib import Path
+
+path = Path('${LIGHTDM_CONF}')
+text = path.read_text() if path.exists() else ''
+remove_keys = {
+    'autologin-user',
+    'autologin-user-timeout',
+    'autologin-session',
+    'user-session',
+}
+
+lines = text.splitlines()
+out = []
+in_seat = False
+
+for line in lines:
+    stripped = line.strip()
+
+    if stripped == '[Seat:*]':
+        in_seat = True
+        out.append(line)
+        continue
+
+    if in_seat and stripped.startswith('[') and stripped.endswith(']'):
+        in_seat = False
+        out.append(line)
+        continue
+
+    if in_seat and '=' in stripped:
+        key = stripped.split('=', 1)[0].strip()
+        if key in remove_keys:
+            continue
+
+    out.append(line)
+
+path.write_text('\n'.join(out) + '\n')
+PY
+}
+
+case "${MODE}" in
+  kiosk) configure_kiosk_mode ;;
+  admin) configure_admin_mode ;;
+esac
+
+chmod 0644 "${LIGHTDM_CONF}"
+
+if [[ "${RESTART_LIGHTDM}" == "1" ]]; then
+  terminate_local_graphical_sessions
+  restart_lightdm_now
+else
+  log "LightDM restart suppressed by --no-restart"
+fi
