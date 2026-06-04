@@ -6,7 +6,7 @@ This installer targets:
 
 - Raspberry Pi OS based on Debian GNU/Linux 13 `trixie`
 - 64-bit Desktop image
-- Wayland session support
+- Wayland session support through `labwc-pi` or `labwc`
 - LightDM active
 - Read-only HTTP/HTTPS directory listing for slide files
 
@@ -22,6 +22,7 @@ It can also install opt-in software update support. When enabled, the Pi can fet
 
 ```text
 install-signage.sh
+update-signage.sh
 uninstall-signage.sh
 signage.conf.example
 files/
@@ -30,10 +31,12 @@ files/
     signagectl
     start-signage
   lib/
+    signage-defaults.sh
     signage-fetch.py
+    signage-install-common.sh
   sbin/
-    signage-admin-mode
-    signage-kiosk-mode
+    signage-install-ca
+    signage-mode
     signage-sync
     signage-update
   systemd/
@@ -128,7 +131,7 @@ signagectl status
 
 The service is enabled at install time, so a reboot returns the Pi to signage mode even if `sudo signagectl stop` was used for local administration.
 
-Lower-level commands such as `signage-admin-mode`, `signage-kiosk-mode`, `signage-sync`, and `signage-update` are installed as helper commands. Prefer `signagectl` for routine operation.
+Lower-level commands such as `signage-mode`, `signage-sync`, and `signage-update` are installed as helper commands. Prefer `signagectl` for routine operation.
 
 ## Configuration: `signage.conf`
 
@@ -234,7 +237,7 @@ The certificate URL itself must be reachable using existing system trust, or ove
 
 Uninstall removes the installer-managed certificate and runs `update-ca-certificates` again.
 
-### Install and uninstall display behavior
+### Install display behavior
 
 By default, install does not immediately restart LightDM:
 
@@ -248,13 +251,7 @@ Set this to `1` before installing if the Pi should enter signage mode immediatel
 RESTART_LIGHTDM_AFTER_INSTALL="1"
 ```
 
-For development cleanup, uninstall can also restart LightDM after removing signage components:
-
-```bash
-RESTART_LIGHTDM_AFTER_UNINSTALL="1"
-```
-
-Use this only when it is safe for the active graphical session to be interrupted.
+Uninstall always restores the saved LightDM configuration and restarts LightDM after removing signage components.
 
 ### Software update settings
 
@@ -290,13 +287,13 @@ Enabling software updates allows the Pi to download and run code from the config
 
 ### Config preservation during updates
 
-During a software update, the repository's `signage.conf.example` becomes the new base config.
-
-Values listed in `SIGNAGE_CONFIG_PRESERVE_KEYS` are copied forward from the existing Pi-local file:
+During a software update, the repository's `signage.conf.example` is treated as the sitewide configuration template. The updater merges that file into:
 
 ```text
 /etc/signage/signage.conf
 ```
+
+Only values listed in `SIGNAGE_CONFIG_PRESERVE_KEYS` are copied forward from the existing Pi-local config.
 
 The default preserve list is:
 
@@ -304,15 +301,15 @@ The default preserve list is:
 SIGNAGE_CONFIG_PRESERVE_KEYS="SLIDES_URL"
 ```
 
-This prevents an update from replacing the Pi's slide URL with a generic or fleet-default value.
+With that default, only the slide source is per-device data. Update settings, CA certificate URL, timer schedule, playback behavior, and other values are sitewide policy and may be replaced by the repository copy of `signage.conf.example`.
 
-Add additional keys to the preserve list if they should remain Pi-local across software updates.
+Add keys to the preserve list only when they should remain Pi-local across software updates.
 
 ## Software updates
 
 Software updates are disabled unless explicitly enabled in `signage.conf`.
 
-When scheduled updates are enabled, the Pi periodically fetches software from the configured Git repository and applies it using the repository's `update-signage.sh` script.
+When scheduled updates are enabled, the Pi periodically fetches software from the configured Git repository and applies it using the repository's root-level `update-signage.sh` script. That script remains in the repository; it is not installed as `/usr/local/sbin/update-signage`.
 
 To manually trigger a software update check:
 
@@ -346,9 +343,9 @@ Use only a trusted update repository. The update system downloads code from the 
 
 ## LightDM and signage mode behavior
 
-The installer adds a `signage.service` kiosk-mode controller.
+The installer adds a `signage.service` kiosk-mode controller backed by the `signage-mode` helper.
 
-It does not run `feh` directly. Instead, it toggles LightDM between the signage autologin session and the normal graphical login screen.
+The controller does not run `feh` directly. Instead, it toggles LightDM between the signage autologin session and the normal graphical login screen.
 
 When signage mode is started or stopped, the controller terminates only local graphical sessions reported by `loginctl` as `x11` or `wayland`, then restarts LightDM. This logs out any active desktop GUI session so the signage session owns the display cleanly.
 
@@ -421,12 +418,13 @@ The uninstaller does not automatically remove `openssh-server`, even if signage 
 /usr/local/bin/signage-session
 /usr/local/bin/signagectl
 /usr/local/bin/start-signage
-/usr/local/sbin/signage-admin-mode
-/usr/local/sbin/signage-kiosk-mode
+/usr/local/sbin/signage-install-ca
+/usr/local/sbin/signage-mode
 /usr/local/sbin/signage-sync
 /usr/local/sbin/signage-update
-/usr/local/sbin/update-signage
+/usr/local/lib/signage/signage-defaults.sh
 /usr/local/lib/signage/signage-fetch.py
+/usr/local/lib/signage/signage-install-common.sh
 /var/lib/signage/
 /var/log/signage/
 /var/lib/signage/state/install.state
@@ -503,14 +501,6 @@ To remove all signage-owned config, cache, state, and logs, use purge mode:
 
 ```bash
 sudo ./uninstall-signage.sh --purge
-```
-
-If the installer state file is missing, uninstall switches to cautious manual mode. Each cleanup step is briefly described and requires `y`, `n`, or `a`:
-
-```text
-y = run the described step
-n = skip the described step
-a = abort uninstall immediately
 ```
 
 The uninstaller does not automatically remove `openssh-server`, even if signage installed it, because SSH may be the active maintenance path. It does remove signage's SSH password-authentication drop-in.

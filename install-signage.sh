@@ -7,6 +7,7 @@ STATE_DIR="/var/lib/signage/state"
 STATE_FILE="${STATE_DIR}/install.state"
 SSH_PASSWORD_AUTH_DROPIN="/etc/ssh/sshd_config.d/99-signage-password-auth.conf"
 CA_CERT_PATH="/usr/local/share/ca-certificates/signage-slides-ca.crt"
+COMMON_SRC="${PROJECT_DIR}/files/lib/signage-install-common.sh"
 REPAIR_MODE="0"
 
 REQUIRED_PACKAGES=(feh ca-certificates python3 git openssh-server)
@@ -18,7 +19,8 @@ PACKAGES_INSTALLED_BY_SIGNAGE=""
 SIGNAGE_USER_CREATED="0"
 SSH_PASSWORD_AUTH_DROPIN_CREATED="0"
 CA_CERT_INSTALLED="0"
-CA_CERT_URL=""
+SLIDES_CA_CERT_URL=""
+HTTP_TIMEOUT_SECONDS="30"
 SIGNAGE_AUTO_UPDATE_ENABLED="false"
 SIGNAGE_AUTO_UPDATE_ONCALENDAR="Tue *-*-* 03:00:00"
 SIGNAGE_AUTO_UPDATE_REPO_URL=""
@@ -56,18 +58,24 @@ require_root() {
   fi
 }
 
+load_common_files() {
+  [[ -f "${COMMON_SRC}" ]] || die "Missing ${COMMON_SRC}"
+  # shellcheck source=files/lib/signage-install-common.sh
+  source "${COMMON_SRC}"
+  load_shared_defaults
+}
+
 load_existing_state() {
   if [[ -f "${STATE_FILE}" ]]; then
     # shellcheck source=/dev/null
     source "${STATE_FILE}"
-    # User/session names are fixed implementation details, not user config.
-    SIGNAGE_USER="signage-user"
-    SIGNAGE_SESSION="signage-session"
+    SIGNAGE_USER="${SIGNAGE_USER_DEFAULT}"
+    SIGNAGE_SESSION="${SIGNAGE_SESSION_DEFAULT}"
     PACKAGES_INSTALLED_BY_SIGNAGE="${PACKAGES_INSTALLED_BY_SIGNAGE:-}"
     SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED:-0}"
     SSH_PASSWORD_AUTH_DROPIN_CREATED="${SSH_PASSWORD_AUTH_DROPIN_CREATED:-0}"
     CA_CERT_INSTALLED="${CA_CERT_INSTALLED:-0}"
-    CA_CERT_PATH="${CA_CERT_PATH:-/usr/local/share/ca-certificates/signage-slides-ca.crt}"
+    CA_CERT_PATH="${CA_CERT_PATH:-${CA_CERT_PATH_DEFAULT}}"
   fi
 }
 
@@ -85,19 +93,10 @@ load_config() {
   source "${CONF_SRC}"
 
   : "${SLIDES_URL:?SLIDES_URL must be set in signage.conf}"
-  # Ignore any legacy SIGNAGE_USER/SIGNAGE_SESSION values in signage.conf.
-  # These names are internal implementation details and are intentionally fixed.
-  SIGNAGE_USER="signage-user"
-  SIGNAGE_SESSION="signage-session"
+  apply_config_defaults
+  validate_runtime_numbers
+  validate_update_config
   RESTART_LIGHTDM_AFTER_INSTALL="${RESTART_LIGHTDM_AFTER_INSTALL:-0}"
-  SLIDES_CA_CERT_URL="${SLIDES_CA_CERT_URL:-}"
-  CA_CERT_URL="${SLIDES_CA_CERT_URL}"
-  HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-30}"
-  SIGNAGE_AUTO_UPDATE_ENABLED="${SIGNAGE_AUTO_UPDATE_ENABLED:-false}"
-  SIGNAGE_AUTO_UPDATE_ONCALENDAR="${SIGNAGE_AUTO_UPDATE_ONCALENDAR:-Tue *-*-* 03:00:00}"
-  SIGNAGE_AUTO_UPDATE_REPO_URL="${SIGNAGE_AUTO_UPDATE_REPO_URL:-}"
-  SIGNAGE_AUTO_UPDATE_REF="${SIGNAGE_AUTO_UPDATE_REF:-HEAD}"
-  SIGNAGE_CONFIG_PRESERVE_KEYS="${SIGNAGE_CONFIG_PRESERVE_KEYS:-SLIDES_URL}"
 }
 
 package_is_installed() {
@@ -116,7 +115,7 @@ write_state() {
   cat > "${STATE_FILE}" <<STATE
 # Created by digital-signage install-signage.sh
 SIGNAGE_INSTALLED="1"
-INSTALL_VERSION="2026-06-01"
+INSTALL_VERSION="${SIGNAGE_INSTALL_VERSION}"
 SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED}"
 PACKAGES_INSTALLED_BY_SIGNAGE="${PACKAGES_INSTALLED_BY_SIGNAGE}"
 SSH_PASSWORD_AUTH_DROPIN_CREATED="${SSH_PASSWORD_AUTH_DROPIN_CREATED}"
@@ -133,11 +132,12 @@ find_install_footprints() {
     "/var/lib/signage"
     "/var/log/signage"
     "/usr/local/lib/signage/signage-fetch.py"
+    "/usr/local/lib/signage/signage-defaults.sh"
+    "/usr/local/lib/signage/signage-install-common.sh"
+    "/usr/local/sbin/signage-install-ca"
+    "/usr/local/sbin/signage-mode"
     "/usr/local/sbin/signage-sync"
     "/usr/local/sbin/signage-update"
-    "/usr/local/sbin/update-signage"
-    "/usr/local/sbin/signage-kiosk-mode"
-    "/usr/local/sbin/signage-admin-mode"
     "/usr/local/bin/start-signage"
     "/usr/local/bin/signage-session"
     "/usr/local/bin/signagectl"
@@ -188,12 +188,10 @@ EOF2
 }
 
 install_packages() {
-  local missing=()
   local pkg
 
   for pkg in "${REQUIRED_PACKAGES[@]}"; do
     if ! package_is_installed "${pkg}"; then
-      missing+=("${pkg}")
       append_unique_package "${pkg}"
     fi
   done
@@ -206,53 +204,14 @@ install_packages() {
 }
 
 install_ca_certificate_if_configured() {
-  if [[ -z "${CA_CERT_URL}" ]]; then
+  if [[ -z "${SLIDES_CA_CERT_URL}" ]]; then
     log "No SLIDES_CA_CERT_URL configured; skipping optional CA certificate install"
     return 0
   fi
 
-  log "Installing optional slide-server CA certificate from ${CA_CERT_URL}"
-  install -d -m 0755 "$(dirname "${CA_CERT_PATH}")"
-
-  local tmp
-  tmp="$(mktemp)"
-  if ! python3 - "${CA_CERT_URL}" "${tmp}" "${HTTP_TIMEOUT_SECONDS}" <<'PY'
-import sys
-import urllib.request
-import urllib.error
-
-url, dest, timeout = sys.argv[1], sys.argv[2], int(sys.argv[3])
-req = urllib.request.Request(url, headers={"User-Agent": "digital-signage-install/0.1"})
-try:
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        data = response.read()
-except urllib.error.HTTPError as exc:
-    print(f"HTTP error {exc.code} {exc.reason} while downloading CA certificate {url}", file=sys.stderr)
-    raise SystemExit(1)
-except urllib.error.URLError as exc:
-    print(f"URL error while downloading CA certificate {url}: {exc.reason}", file=sys.stderr)
-    raise SystemExit(1)
-
-if not data:
-    print(f"CA certificate download was empty: {url}", file=sys.stderr)
-    raise SystemExit(1)
-
-with open(dest, "wb") as fh:
-    fh.write(data)
-PY
-  then
-    rm -f "${tmp}"
-    die "Failed to download CA certificate from SLIDES_CA_CERT_URL=${CA_CERT_URL}"
-  fi
-
-  if ! grep -q 'BEGIN CERTIFICATE' "${tmp}"; then
-    rm -f "${tmp}"
-    die "Downloaded CA certificate must be PEM format and contain BEGIN CERTIFICATE"
-  fi
-
-  install -m 0644 "${tmp}" "${CA_CERT_PATH}"
-  rm -f "${tmp}"
-  update-ca-certificates
+  log "Installing optional slide-server CA certificate from ${SLIDES_CA_CERT_URL}"
+  "${PROJECT_DIR}/files/sbin/signage-install-ca" "${SLIDES_CA_CERT_URL}" "${CA_CERT_PATH}" "${HTTP_TIMEOUT_SECONDS}" || \
+    die "Failed to install CA certificate from SLIDES_CA_CERT_URL=${SLIDES_CA_CERT_URL}"
   CA_CERT_INSTALLED="1"
   write_state
 }
@@ -353,42 +312,13 @@ create_signage_user() {
 install_files() {
   log "Installing signage files"
 
-  install -d -m 0755 /etc/signage
-  install -d -m 0755 /usr/local/lib/signage
-  install -d -m 0755 /usr/local/bin
-  install -d -m 0755 /usr/local/sbin
-  install -d -m 0755 /etc/systemd/system
-  install -d -m 0755 /usr/share/wayland-sessions
-  install -d -m 0755 /etc/lightdm/lightdm.conf.d
-  install -d -m 0755 /var/lib/signage/releases
-  install -d -m 0755 /var/lib/signage/staging
-  install -d -m 0755 /var/lib/signage/state
-  install -d -m 0755 /var/lib/signage/update
-  install -d -m 0755 /var/log/signage
-
+  install_managed_files
   install -m 0644 "${CONF_SRC}" /etc/signage/signage.conf
-  install -m 0755 "${PROJECT_DIR}/files/lib/signage-fetch.py" /usr/local/lib/signage/signage-fetch.py
-  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-sync" /usr/local/sbin/signage-sync
-  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-kiosk-mode" /usr/local/sbin/signage-kiosk-mode
-  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-admin-mode" /usr/local/sbin/signage-admin-mode
-  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-update" /usr/local/sbin/signage-update
-  install -m 0755 "${PROJECT_DIR}/update-signage.sh" /usr/local/sbin/update-signage
-  install -m 0755 "${PROJECT_DIR}/files/bin/start-signage" /usr/local/bin/start-signage
-  install -m 0755 "${PROJECT_DIR}/files/bin/signage-session" /usr/local/bin/signage-session
-  install -m 0755 "${PROJECT_DIR}/files/bin/signagectl" /usr/local/bin/signagectl
-  install -m 0644 "${PROJECT_DIR}/files/systemd/signage.service" /etc/systemd/system/signage.service
-  install -m 0644 "${PROJECT_DIR}/files/systemd/signage-sync.service" /etc/systemd/system/signage-sync.service
-  install -m 0644 "${PROJECT_DIR}/files/systemd/signage-sync.timer" /etc/systemd/system/signage-sync.timer
-  install -m 0644 "${PROJECT_DIR}/files/systemd/signage-update.service" /etc/systemd/system/signage-update.service
-  install -m 0644 "${PROJECT_DIR}/files/wayland-sessions/signage-session.desktop" /usr/share/wayland-sessions/signage-session.desktop
-
-  chown -R root:root /etc/signage /usr/local/lib/signage /var/lib/signage /var/log/signage
-  chmod 0755 /var/lib/signage /var/lib/signage/releases /var/lib/signage/staging /var/lib/signage/state /var/lib/signage/update /var/log/signage
   write_state
 }
 
 configure_lightdm() {
-  log "Configuring LightDM autologin for signage-user/signage-session"
+  log "Configuring LightDM autologin for ${SIGNAGE_USER}/${SIGNAGE_SESSION}"
 
   local lightdm_conf="/etc/lightdm/lightdm.conf"
   local backup_file="${STATE_DIR}/lightdm.conf.pre-signage"
@@ -405,11 +335,7 @@ configure_lightdm() {
     fi
   fi
 
-  /usr/local/sbin/signage-kiosk-mode --no-restart
-
-  # Remove stale copies from earlier development iterations. The canonical
-  # installer-owned LightDM change is now the backed-up edit to lightdm.conf.
-  rm -f /etc/lightdm/lightdm.conf.d/50-signage-autologin.conf
+  /usr/local/sbin/signage-mode kiosk --no-restart
 }
 
 run_initial_sync() {
@@ -417,30 +343,6 @@ run_initial_sync() {
   if ! /usr/local/sbin/signage-sync --initial --no-restart; then
     die "Initial sync failed. The web directory must be reachable and contain at least one feh-readable image. Run ./uninstall-signage.sh to remove partial install state."
   fi
-}
-
-as_bool() {
-  case "${1,,}" in
-    1|yes|true|on|enabled) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-write_update_timer() {
-  cat > /etc/systemd/system/signage-update.timer <<EOF_TIMER
-[Unit]
-Description=Run Digital Signage software update check
-Documentation=man:systemd.timer(5)
-
-[Timer]
-OnCalendar=${SIGNAGE_AUTO_UPDATE_ONCALENDAR}
-Persistent=true
-Unit=signage-update.service
-
-[Install]
-WantedBy=timers.target
-EOF_TIMER
-  chmod 0644 /etc/systemd/system/signage-update.timer
 }
 
 record_source_commit_if_available() {
@@ -462,9 +364,6 @@ enable_services() {
   systemctl enable --now signage-sync.timer
 
   if as_bool "${SIGNAGE_AUTO_UPDATE_ENABLED}"; then
-    if [[ -z "${SIGNAGE_AUTO_UPDATE_REPO_URL}" ]]; then
-      die "SIGNAGE_AUTO_UPDATE_ENABLED is true but SIGNAGE_AUTO_UPDATE_REPO_URL is empty"
-    fi
     systemctl enable --now signage-update.timer
   else
     systemctl disable --now signage-update.timer >/dev/null 2>&1 || true
@@ -481,9 +380,11 @@ enable_services() {
 main() {
   parse_args "$@"
   require_root
+  load_common_files
   load_existing_state
   refuse_if_existing_install_without_repair
   load_config
+  preflight_display_stack
 
   install_packages
   configure_ssh

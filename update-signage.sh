@@ -5,13 +5,16 @@ PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="/etc/signage/signage.conf"
 CONFIG_EXAMPLE="${PROJECT_DIR}/signage.conf.example"
 STATE_DIR="/var/lib/signage/state"
-CA_CERT_PATH="/usr/local/share/ca-certificates/signage-slides-ca.crt"
+COMMON_SRC="${PROJECT_DIR}/files/lib/signage-install-common.sh"
 
 SIGNAGE_AUTO_UPDATE_ENABLED="false"
 SIGNAGE_AUTO_UPDATE_ONCALENDAR="Tue *-*-* 03:00:00"
 SIGNAGE_CONFIG_PRESERVE_KEYS="SLIDES_URL"
+SIGNAGE_AUTO_UPDATE_REPO_URL=""
+SIGNAGE_AUTO_UPDATE_REF="HEAD"
 SLIDES_CA_CERT_URL=""
 HTTP_TIMEOUT_SECONDS="30"
+CA_CERT_PATH="/usr/local/share/ca-certificates/signage-slides-ca.crt"
 CA_CERT_INSTALLED="0"
 
 log() { printf '[update-signage] %s\n' "$*"; }
@@ -23,15 +26,11 @@ require_root() {
   fi
 }
 
-as_bool() {
-  case "${1,,}" in
-    1|yes|true|on|enabled) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-require_project_file() {
-  [[ -f "${PROJECT_DIR}/$1" ]] || die "Missing required repo file: $1"
+load_common_files() {
+  [[ -f "${COMMON_SRC}" ]] || die "Missing ${COMMON_SRC}"
+  # shellcheck source=files/lib/signage-install-common.sh
+  source "${COMMON_SRC}"
+  load_shared_defaults
 }
 
 load_current_config_defaults() {
@@ -40,11 +39,7 @@ load_current_config_defaults() {
     source "${CONFIG_FILE}"
   fi
 
-  SIGNAGE_AUTO_UPDATE_ENABLED="${SIGNAGE_AUTO_UPDATE_ENABLED:-false}"
-  SIGNAGE_AUTO_UPDATE_ONCALENDAR="${SIGNAGE_AUTO_UPDATE_ONCALENDAR:-Tue *-*-* 03:00:00}"
-  SIGNAGE_CONFIG_PRESERVE_KEYS="${SIGNAGE_CONFIG_PRESERVE_KEYS:-SLIDES_URL}"
-  SLIDES_CA_CERT_URL="${SLIDES_CA_CERT_URL:-}"
-  HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-30}"
+  apply_config_defaults
 }
 
 merge_config() {
@@ -100,7 +95,7 @@ for key in preserve:
 if append_lines:
     if out_lines and out_lines[-1] != "":
         out_lines.append("")
-    out_lines.append("# Preserved local values not present in signage.conf.example.")
+    out_lines.append("# Preserved Pi-local values not present in signage.conf.example.")
     out_lines.extend(append_lines)
 
 out_conf.write_text("\n".join(out_lines) + "\n")
@@ -113,125 +108,34 @@ PY
 reload_config_after_merge() {
   # shellcheck source=/dev/null
   source "${CONFIG_FILE}"
-  SIGNAGE_AUTO_UPDATE_ENABLED="${SIGNAGE_AUTO_UPDATE_ENABLED:-false}"
-  SIGNAGE_AUTO_UPDATE_ONCALENDAR="${SIGNAGE_AUTO_UPDATE_ONCALENDAR:-Tue *-*-* 03:00:00}"
-  SLIDES_CA_CERT_URL="${SLIDES_CA_CERT_URL:-}"
-  HTTP_TIMEOUT_SECONDS="${HTTP_TIMEOUT_SECONDS:-30}"
+  : "${SLIDES_URL:?SLIDES_URL must be set in ${CONFIG_FILE}}"
+  apply_config_defaults
+  validate_runtime_numbers
+  validate_update_config
 }
 
 install_files() {
   log "Updating managed signage files"
-
-  install -d -m 0755 /usr/local/lib/signage
-  install -d -m 0755 /usr/local/bin
-  install -d -m 0755 /usr/local/sbin
-  install -d -m 0755 /etc/systemd/system
-  install -d -m 0755 /usr/share/wayland-sessions
-  install -d -m 0755 /var/lib/signage/releases
-  install -d -m 0755 /var/lib/signage/staging
-  install -d -m 0755 /var/lib/signage/state
-  install -d -m 0755 /var/lib/signage/update
-  install -d -m 0755 /var/log/signage
-
-  require_project_file "files/lib/signage-fetch.py"
-  require_project_file "files/sbin/signage-sync"
-  require_project_file "files/sbin/signage-kiosk-mode"
-  require_project_file "files/sbin/signage-admin-mode"
-  require_project_file "files/sbin/signage-update"
-  require_project_file "files/bin/start-signage"
-  require_project_file "files/bin/signage-session"
-  require_project_file "files/bin/signagectl"
-  require_project_file "files/systemd/signage.service"
-  require_project_file "files/systemd/signage-sync.service"
-  require_project_file "files/systemd/signage-sync.timer"
-  require_project_file "files/systemd/signage-update.service"
-  require_project_file "files/wayland-sessions/signage-session.desktop"
-
-  install -m 0755 "${PROJECT_DIR}/files/lib/signage-fetch.py" /usr/local/lib/signage/signage-fetch.py
-  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-sync" /usr/local/sbin/signage-sync
-  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-kiosk-mode" /usr/local/sbin/signage-kiosk-mode
-  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-admin-mode" /usr/local/sbin/signage-admin-mode
-  install -m 0755 "${PROJECT_DIR}/files/sbin/signage-update" /usr/local/sbin/signage-update
-  install -m 0755 "${PROJECT_DIR}/update-signage.sh" /usr/local/sbin/update-signage
-  install -m 0755 "${PROJECT_DIR}/files/bin/start-signage" /usr/local/bin/start-signage
-  install -m 0755 "${PROJECT_DIR}/files/bin/signage-session" /usr/local/bin/signage-session
-  install -m 0755 "${PROJECT_DIR}/files/bin/signagectl" /usr/local/bin/signagectl
-  install -m 0644 "${PROJECT_DIR}/files/systemd/signage.service" /etc/systemd/system/signage.service
-  install -m 0644 "${PROJECT_DIR}/files/systemd/signage-sync.service" /etc/systemd/system/signage-sync.service
-  install -m 0644 "${PROJECT_DIR}/files/systemd/signage-sync.timer" /etc/systemd/system/signage-sync.timer
-  install -m 0644 "${PROJECT_DIR}/files/systemd/signage-update.service" /etc/systemd/system/signage-update.service
-  install -m 0644 "${PROJECT_DIR}/files/wayland-sessions/signage-session.desktop" /usr/share/wayland-sessions/signage-session.desktop
-
-  chown -R root:root /etc/signage /usr/local/lib/signage /var/lib/signage /var/log/signage
-  chmod 0755 /var/lib/signage /var/lib/signage/releases /var/lib/signage/staging /var/lib/signage/state /var/lib/signage/update /var/log/signage
+  install_managed_files
 }
 
 install_ca_certificate_if_configured() {
   if [[ -z "${SLIDES_CA_CERT_URL}" ]]; then
-    log "No SLIDES_CA_CERT_URL configured; skipping optional CA certificate update."
+    if [[ -e "${CA_CERT_PATH}" ]]; then
+      log "Removing installer-managed CA certificate because SLIDES_CA_CERT_URL is empty."
+      rm -f "${CA_CERT_PATH}"
+      update-ca-certificates >/dev/null 2>&1 || true
+    else
+      log "No SLIDES_CA_CERT_URL configured; skipping optional CA certificate update."
+    fi
+    CA_CERT_INSTALLED="0"
     return 0
   fi
 
   log "Updating optional slide-server CA certificate from ${SLIDES_CA_CERT_URL}"
-  install -d -m 0755 "$(dirname "${CA_CERT_PATH}")"
-
-  local tmp
-  tmp="$(mktemp)"
-  if ! python3 - "${SLIDES_CA_CERT_URL}" "${tmp}" "${HTTP_TIMEOUT_SECONDS}" <<'PY'
-import sys
-import urllib.request
-import urllib.error
-
-url, dest, timeout = sys.argv[1], sys.argv[2], int(sys.argv[3])
-req = urllib.request.Request(url, headers={"User-Agent": "digital-signage-update/0.1"})
-try:
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        data = response.read()
-except urllib.error.HTTPError as exc:
-    print(f"HTTP error {exc.code} {exc.reason} while downloading CA certificate {url}", file=sys.stderr)
-    raise SystemExit(1)
-except urllib.error.URLError as exc:
-    print(f"URL error while downloading CA certificate {url}: {exc.reason}", file=sys.stderr)
-    raise SystemExit(1)
-
-if not data:
-    print(f"CA certificate download was empty: {url}", file=sys.stderr)
-    raise SystemExit(1)
-
-with open(dest, "wb") as fh:
-    fh.write(data)
-PY
-  then
-    rm -f "${tmp}"
-    die "Failed to download CA certificate from SLIDES_CA_CERT_URL=${SLIDES_CA_CERT_URL}"
-  fi
-
-  if ! grep -q 'BEGIN CERTIFICATE' "${tmp}"; then
-    rm -f "${tmp}"
-    die "Downloaded CA certificate must be PEM format and contain BEGIN CERTIFICATE"
-  fi
-
-  install -m 0644 "${tmp}" "${CA_CERT_PATH}"
-  rm -f "${tmp}"
-  update-ca-certificates
+  "${PROJECT_DIR}/files/sbin/signage-install-ca" "${SLIDES_CA_CERT_URL}" "${CA_CERT_PATH}" "${HTTP_TIMEOUT_SECONDS}" || \
+    die "Failed to install CA certificate from SLIDES_CA_CERT_URL=${SLIDES_CA_CERT_URL}"
   CA_CERT_INSTALLED="1"
-}
-
-write_update_timer() {
-  cat > /etc/systemd/system/signage-update.timer <<EOF_TIMER
-[Unit]
-Description=Run Digital Signage software update check
-Documentation=man:systemd.timer(5)
-
-[Timer]
-OnCalendar=${SIGNAGE_AUTO_UPDATE_ONCALENDAR}
-Persistent=true
-Unit=signage-update.service
-
-[Install]
-WantedBy=timers.target
-EOF_TIMER
-  chmod 0644 /etc/systemd/system/signage-update.timer
 }
 
 configure_services() {
@@ -267,6 +171,7 @@ STATE
 
 main() {
   require_root
+  load_common_files
   load_current_config_defaults
   merge_config
   reload_config_after_merge

@@ -6,8 +6,8 @@ Wants=lightdm.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/signage-kiosk-mode
-ExecStop=/usr/local/sbin/signage-admin-mode
+ExecStart=/usr/local/sbin/signage-mode kiosk
+ExecStop=/usr/local/sbin/signage-mode admin
 TimeoutStartSec=15
 TimeoutStopSec=15
 

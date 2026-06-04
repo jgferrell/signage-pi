@@ -6,13 +6,9 @@ SSH_PASSWORD_AUTH_DROPIN="/etc/ssh/sshd_config.d/99-signage-password-auth.conf"
 CA_CERT_PATH="/usr/local/share/ca-certificates/signage-slides-ca.crt"
 SIGNAGE_USER="signage-user"
 PACKAGES_INSTALLED_BY_SIGNAGE=""
-SIGNAGE_USER_CREATED="1"
-SSH_PASSWORD_AUTH_DROPIN_CREATED="0"
+SIGNAGE_USER_CREATED="0"
 CA_CERT_INSTALLED="0"
-RESTART_LIGHTDM_AFTER_UNINSTALL="0"
 PURGE_MODE="0"
-KNOWN_INSTALL="0"
-MANUAL_CONFIRM_STEPS="0"
 
 log() { printf '[uninstall-signage] %s\n' "$*"; }
 die() { printf '[uninstall-signage] ERROR: %s\n' "$*" >&2; exit 1; }
@@ -25,11 +21,6 @@ Options:
   --purge   Remove all signage-owned config, cache, state, logs, and installer-created files.
   -h, --help
             Show this help.
-
-When install state is missing, each cleanup step is confirmed individually:
-  y = run the described step
-  n = skip the described step
-  a = abort uninstall immediately
 USAGE
 }
 
@@ -50,58 +41,17 @@ require_root() {
   fi
 }
 
-load_state_and_config() {
-  if [[ -f /etc/signage/signage.conf ]]; then
-    # shellcheck source=/dev/null
-    source /etc/signage/signage.conf || true
-    # Ignore any legacy SIGNAGE_USER value in signage.conf.
-    SIGNAGE_USER="signage-user"
-    RESTART_LIGHTDM_AFTER_UNINSTALL="${RESTART_LIGHTDM_AFTER_UNINSTALL:-0}"
-  fi
-
+load_state() {
   if [[ -f "${STATE_FILE}" ]]; then
-    KNOWN_INSTALL="1"
     # shellcheck source=/dev/null
     source "${STATE_FILE}"
-    # User name is fixed; old state files may contain it, but it is not configurable.
     SIGNAGE_USER="signage-user"
     PACKAGES_INSTALLED_BY_SIGNAGE="${PACKAGES_INSTALLED_BY_SIGNAGE:-}"
-    SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED:-1}"
-    SSH_PASSWORD_AUTH_DROPIN_CREATED="${SSH_PASSWORD_AUTH_DROPIN_CREATED:-0}"
+    SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED:-0}"
     CA_CERT_INSTALLED="${CA_CERT_INSTALLED:-0}"
     CA_CERT_PATH="${CA_CERT_PATH:-/usr/local/share/ca-certificates/signage-slides-ca.crt}"
   else
-    MANUAL_CONFIRM_STEPS="1"
-    log "No install state file found. Signage may not be installed, or the install may be partial/corrupt."
-    log "Each cleanup step will require confirmation. Enter y to run, n to skip, or a to abort."
-  fi
-}
-
-confirm_step() {
-  local description="$1"
-  local reply=""
-
-  if [[ "${MANUAL_CONFIRM_STEPS}" != "1" ]]; then
-    return 0
-  fi
-
-  while true; do
-    printf '\n[uninstall-signage] Step: %s\n' "${description}"
-    read -r -p "Run this step? [y/n/a] " reply
-    case "${reply}" in
-      y|Y) return 0 ;;
-      n|N) log "Skipped: ${description}"; return 1 ;;
-      a|A) die "Uninstall aborted by user" ;;
-      *) printf 'Enter y, n, or a.\n' ;;
-    esac
-  done
-}
-
-run_step() {
-  local description="$1"
-  shift
-  if confirm_step "${description}"; then
-    "$@"
+    log "No install state file found; continuing with fixed signage-owned paths only."
   fi
 }
 
@@ -126,9 +76,6 @@ restore_lightdm_config() {
   local backup_file="/var/lib/signage/state/lightdm.conf.pre-signage"
   local missing_marker="/var/lib/signage/state/lightdm.conf.was-missing"
 
-  # Remove stale drop-in from earlier development iterations.
-  rm -f /etc/lightdm/lightdm.conf.d/50-signage-autologin.conf
-
   if [[ -f "${backup_file}" ]]; then
     cp -a "${backup_file}" /etc/lightdm/lightdm.conf
   elif [[ -f "${missing_marker}" ]]; then
@@ -136,6 +83,11 @@ restore_lightdm_config() {
   else
     log "No LightDM backup marker found; leaving /etc/lightdm/lightdm.conf unchanged."
   fi
+}
+
+restart_lightdm() {
+  log "Restarting LightDM"
+  systemctl restart lightdm || true
 }
 
 remove_ssh_config() {
@@ -169,15 +121,15 @@ remove_program_files() {
   rm -f /etc/systemd/system/signage-sync.timer
   rm -f /etc/systemd/system/signage-update.service
   rm -f /etc/systemd/system/signage-update.timer
-  rm -f /etc/lightdm/lightdm.conf.d/50-signage-autologin.conf
   rm -f /usr/share/wayland-sessions/signage-session.desktop
   rm -f /usr/local/lib/signage/signage-fetch.py
+  rm -f /usr/local/lib/signage/signage-defaults.sh
+  rm -f /usr/local/lib/signage/signage-install-common.sh
   rmdir /usr/local/lib/signage >/dev/null 2>&1 || true
+  rm -f /usr/local/sbin/signage-install-ca
+  rm -f /usr/local/sbin/signage-mode
   rm -f /usr/local/sbin/signage-sync
   rm -f /usr/local/sbin/signage-update
-  rm -f /usr/local/sbin/update-signage
-  rm -f /usr/local/sbin/signage-kiosk-mode
-  rm -f /usr/local/sbin/signage-admin-mode
   rm -f /usr/local/bin/start-signage
   rm -f /usr/local/bin/signage-session
   rm -f /usr/local/bin/signagectl
@@ -217,15 +169,12 @@ remove_user() {
 remove_packages() {
   local packages_to_remove=()
 
-  # Development expectation: remove feh. It is the only package the signage runtime
-  # unambiguously owns after install.
   packages_to_remove+=(feh)
 
   local pkg
   for pkg in ${PACKAGES_INSTALLED_BY_SIGNAGE}; do
     case "${pkg}" in
       openssh-server)
-        # Do not automatically remove SSH. It may be the current maintenance path.
         continue
         ;;
     esac
@@ -246,40 +195,28 @@ remove_packages() {
   fi
 }
 
-maybe_restart_lightdm() {
-  if [[ "${RESTART_LIGHTDM_AFTER_UNINSTALL}" == "1" ]]; then
-    log "Restarting LightDM because RESTART_LIGHTDM_AFTER_UNINSTALL=1"
-    systemctl restart lightdm || true
-  else
-    log "LightDM was not restarted. Reboot or restart LightDM manually if needed."
-  fi
-}
-
 main() {
   parse_args "$@"
   require_root
-  load_state_and_config
+  load_state
 
-  run_step "disable signage services and stop the signage user session" stop_services_and_sessions
-  run_step "restore the pre-signage LightDM configuration if a backup exists" restore_lightdm_config
-  run_step "remove signage's SSH password-authentication drop-in and reload ssh" remove_ssh_config
-  run_step "remove signage's optional slide-server CA certificate and update trust store" remove_ca_certificate
-  run_step "remove signage program files, systemd units, and session files" remove_program_files
-  run_step "remove the signage-user account if installer state says it was created by signage" remove_user
-  run_step "purge feh and other non-SSH packages recorded as installed by signage" remove_packages
+  stop_services_and_sessions
+  restore_lightdm_config
+  remove_ssh_config
+  remove_ca_certificate
+  remove_program_files
 
   if [[ "${PURGE_MODE}" == "1" ]]; then
-    run_step "purge all signage-owned config, cache, state, and logs" purge_config_state_and_cache
+    purge_config_state_and_cache
   else
-    run_step "remove installer state while preserving /etc/signage and /var/lib/signage slideshow cache" remove_state_for_normal_uninstall
+    remove_state_for_normal_uninstall
   fi
 
-  maybe_restart_lightdm
-  if [[ "${PURGE_MODE}" == "1" ]]; then
-    log "Purge uninstall complete."
-  else
-    log "Uninstall complete. Local config/cache may remain; use --purge to remove them."
-  fi
+  remove_user
+  remove_packages
+  restart_lightdm
+
+  log "Uninstall complete."
 }
 
 main "$@"

@@ -2,14 +2,23 @@
 set -u
 
 CONFIG_FILE="/etc/signage/signage.conf"
+DEFAULTS_FILE="/usr/local/lib/signage/signage-defaults.sh"
 CURRENT_DIR="/var/lib/signage/current"
 SLIDESHOW_DELAY_SECONDS="8"
+
+if [[ -f "${DEFAULTS_FILE}" ]]; then
+  # shellcheck source=/usr/local/lib/signage/signage-defaults.sh
+  source "${DEFAULTS_FILE}"
+  SLIDESHOW_DELAY_SECONDS="${SLIDESHOW_DELAY_SECONDS_DEFAULT}"
+fi
 
 if [[ -f "${CONFIG_FILE}" ]]; then
   # shellcheck source=/dev/null
   source "${CONFIG_FILE}"
-  SLIDESHOW_DELAY_SECONDS="${SLIDESHOW_DELAY_SECONDS:-8}"
+  SLIDESHOW_DELAY_SECONDS="${SLIDESHOW_DELAY_SECONDS:-${SLIDESHOW_DELAY_SECONDS_DEFAULT:-8}}"
 fi
+
+[[ "${SLIDESHOW_DELAY_SECONDS}" =~ ^[0-9]+$ ]] || SLIDESHOW_DELAY_SECONDS="${SLIDESHOW_DELAY_SECONDS_DEFAULT:-8}"
 
 while true; do
   xset -dpms >/dev/null 2>&1 || true
