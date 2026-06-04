@@ -60,8 +60,9 @@ load_existing_state() {
   if [[ -f "${STATE_FILE}" ]]; then
     # shellcheck source=/dev/null
     source "${STATE_FILE}"
-    SIGNAGE_USER="${SIGNAGE_USER:-signage-user}"
-    SIGNAGE_SESSION="${SIGNAGE_SESSION:-signage-session}"
+    # User/session names are fixed implementation details, not user config.
+    SIGNAGE_USER="signage-user"
+    SIGNAGE_SESSION="signage-session"
     PACKAGES_INSTALLED_BY_SIGNAGE="${PACKAGES_INSTALLED_BY_SIGNAGE:-}"
     SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED:-0}"
     SSH_PASSWORD_AUTH_DROPIN_CREATED="${SSH_PASSWORD_AUTH_DROPIN_CREATED:-0}"
@@ -84,8 +85,10 @@ load_config() {
   source "${CONF_SRC}"
 
   : "${SLIDES_URL:?SLIDES_URL must be set in signage.conf}"
-  SIGNAGE_USER="${SIGNAGE_USER:-signage-user}"
-  SIGNAGE_SESSION="${SIGNAGE_SESSION:-signage-session}"
+  # Ignore any legacy SIGNAGE_USER/SIGNAGE_SESSION values in signage.conf.
+  # These names are internal implementation details and are intentionally fixed.
+  SIGNAGE_USER="signage-user"
+  SIGNAGE_SESSION="signage-session"
   RESTART_LIGHTDM_AFTER_INSTALL="${RESTART_LIGHTDM_AFTER_INSTALL:-0}"
   SLIDES_CA_CERT_URL="${SLIDES_CA_CERT_URL:-}"
   CA_CERT_URL="${SLIDES_CA_CERT_URL}"
@@ -95,13 +98,6 @@ load_config() {
   SIGNAGE_AUTO_UPDATE_REPO_URL="${SIGNAGE_AUTO_UPDATE_REPO_URL:-}"
   SIGNAGE_AUTO_UPDATE_REF="${SIGNAGE_AUTO_UPDATE_REF:-HEAD}"
   SIGNAGE_CONFIG_PRESERVE_KEYS="${SIGNAGE_CONFIG_PRESERVE_KEYS:-SLIDES_URL}"
-
-  if [[ "${SIGNAGE_USER}" != "signage-user" ]]; then
-    die "This installer currently requires SIGNAGE_USER=\"signage-user\"."
-  fi
-  if [[ "${SIGNAGE_SESSION}" != "signage-session" ]]; then
-    die "This installer currently requires SIGNAGE_SESSION=\"signage-session\"."
-  fi
 }
 
 package_is_installed() {
@@ -121,8 +117,6 @@ write_state() {
 # Created by digital-signage install-signage.sh
 SIGNAGE_INSTALLED="1"
 INSTALL_VERSION="2026-06-01"
-SIGNAGE_USER="${SIGNAGE_USER}"
-SIGNAGE_SESSION="${SIGNAGE_SESSION}"
 SIGNAGE_USER_CREATED="${SIGNAGE_USER_CREATED}"
 PACKAGES_INSTALLED_BY_SIGNAGE="${PACKAGES_INSTALLED_BY_SIGNAGE}"
 SSH_PASSWORD_AUTH_DROPIN_CREATED="${SSH_PASSWORD_AUTH_DROPIN_CREATED}"
