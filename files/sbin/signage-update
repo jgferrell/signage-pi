@@ -48,7 +48,7 @@ prepare_repo() {
 
   if [[ ! -d "${REPO_DIR}/.git" ]]; then
     log "Creating local update clone from ${SIGNAGE_AUTO_UPDATE_REPO_URL}"
-    rm -rf "${REPO_DIR}.tmp"
+    rm -rf "${REPO_DIR}" "${REPO_DIR}.tmp"
     git clone --no-checkout "${SIGNAGE_AUTO_UPDATE_REPO_URL}" "${REPO_DIR}.tmp"
     mv "${REPO_DIR}.tmp" "${REPO_DIR}"
   fi

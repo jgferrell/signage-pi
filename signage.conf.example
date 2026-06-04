@@ -1,5 +1,8 @@
 # Copy this file to ./signage.conf before running install-signage.sh.
 # The installer copies ./signage.conf to /etc/signage/signage.conf.
+# During software updates, the repository copy of this file is treated as the
+# sitewide configuration template. Only keys listed in
+# SIGNAGE_CONFIG_PRESERVE_KEYS retain their existing Pi-local values.
 
 # Required: URL of a plain Apache/Nginx-style directory listing containing slides.
 # Read-only access must not require authentication.
@@ -41,11 +44,11 @@ SIGNAGE_AUTO_UPDATE_REF="HEAD"
 SIGNAGE_AUTO_UPDATE_ONCALENDAR="Tue *-*-* 03:00:00"
 
 # Space-separated config keys that should retain the Pi-local value during
-# software updates. Use this for per-device settings that must not be reset
-# to repo defaults.
+# software updates. By default, only SLIDES_URL is treated as per-device data;
+# update settings and other values are sitewide and may be replaced by the
+# repository copy of this file.
 SIGNAGE_CONFIG_PRESERVE_KEYS="SLIDES_URL"
 
-# Safety default: do not restart LightDM during install/uninstall.
-# Set to 1 during development if you want the graphical login manager restarted automatically.
+# Safety default: do not restart LightDM during install.
+# Set to 1 if you want the graphical login manager restarted automatically.
 RESTART_LIGHTDM_AFTER_INSTALL="0"
-RESTART_LIGHTDM_AFTER_UNINSTALL="0"
