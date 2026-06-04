@@ -34,7 +34,7 @@ case "${cmd}" in
     ;;
   stop)
     require_root_for_action "stop"
-    systemctl disable --now signage-sync.timer >/dev/null 2>&1 || true
+    systemctl stop signage-sync.timer >/dev/null 2>&1 || true
     systemctl stop signage-sync.service >/dev/null 2>&1 || true
     systemctl stop signage.service
     ;;
